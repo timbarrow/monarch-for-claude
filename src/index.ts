@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { BrowserCapture } from "./auth/browser-capture.js";
 import { SessionStore } from "./auth/session-store.js";
+import { SERVER_VERSION } from "./config.js";
 import { MonarchClient } from "./monarch/client.js";
 import { LoopbackConfirmation } from "./rules/confirmation.js";
 import { PreviewStore } from "./rules/preview-store.js";
@@ -45,7 +46,7 @@ export function createServer(deps?: {
   );
   const server = new McpServer({
     name: "monarch-for-claude",
-    version: "0.1.6",
+    version: SERVER_VERSION,
   });
   server.registerTool(
     "get_monarch_connection_status",

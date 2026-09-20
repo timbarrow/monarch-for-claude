@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { searchTransactionsInput } from "../../src/tools/contracts.js";
-import { redact, sanitizeAuthenticationFields } from "../../src/logging.js";
+import {
+  authenticationLog,
+  authenticationTrace,
+  redact,
+  sanitizeAuthenticationFields,
+} from "../../src/logging.js";
 import { toGraphqlSafeRule } from "../../src/rules/schema.js";
 
 describe("security boundary", () => {
@@ -46,5 +51,19 @@ describe("security boundary", () => {
       cookie_names: "csrftoken,sessionid",
       code: "AUTH_REQUIRED",
     });
+    authenticationLog("TEST_SAFE_TRACE", {
+      authorization: "Token secret",
+      cookie: "session=secret",
+      authorization_present: true,
+      code: "AUTH_REQUIRED",
+    });
+    expect(authenticationTrace().at(-1)).toMatchObject({
+      event: "TEST_SAFE_TRACE",
+      authorization_present: true,
+      code: "AUTH_REQUIRED",
+    });
+    expect(JSON.stringify(authenticationTrace().at(-1))).not.toContain(
+      "secret",
+    );
   });
 });

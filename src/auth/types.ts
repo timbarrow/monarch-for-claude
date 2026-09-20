@@ -13,9 +13,15 @@ export interface MonarchSession {
 }
 
 export interface ConnectionStatus {
+  server_version: string;
   connected: boolean;
   auth_mode: AuthMode;
   last_verified_at: string | null;
   reauthentication_required: boolean;
   diagnostic_code: string;
+  diagnostic_trace: Array<{
+    timestamp: string;
+    event: string;
+    [key: string]: string | number | boolean | null;
+  }>;
 }

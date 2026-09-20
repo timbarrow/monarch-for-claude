@@ -25,7 +25,7 @@ Remove the extension in Claude Desktop. If desired, separately delete `%LOCALAPP
 
 ## Authentication diagnostics
 
-Sanitized authentication events are written to `%LOCALAPPDATA%\MonarchForClaude\logs\authentication.log` and rotated at 1 MiB. The log contains stages, safe error codes, HTTP status codes, header-presence booleans, and cookie names only. It never records passwords, OTPs, authorization tokens, cookie values, CSRF values, GraphQL response data, or financial data.
+Sanitized authentication events are returned by `get_monarch_connection_status` in `diagnostic_trace`. A best-effort file copy is also written inside the extension runtime at `%LOCALAPPDATA%\MonarchForClaude\logs\authentication.log` and rotated at 1 MiB, but Claude Desktop's isolation may make that path inaccessible from the host. Diagnostics contain stages, safe error codes, HTTP status codes, header-presence booleans, and cookie names only. They never record passwords, OTPs, authorization tokens, cookie values, CSRF values, GraphQL response data, or financial data.
 
 ## Live testing
 

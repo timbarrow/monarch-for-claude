@@ -486,6 +486,7 @@ export class BrowserCapture {
             isMonarchGraphqlUrl(params?.response?.url) &&
             params?.response?.status === 200
           ) {
+            requestUrls.set(requestId, params.response.url as string);
             successfulResponses.add(requestId);
             onProgress?.("MONARCH_GRAPHQL_SEEN");
             authenticationLog("MONARCH_GRAPHQL_SEEN", { http_status: 200 });

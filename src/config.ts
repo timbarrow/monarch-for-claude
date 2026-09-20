@@ -1,5 +1,7 @@
 import path from "node:path";
 
+export const SERVER_VERSION = "0.1.7";
+
 /** The interactive browser app is separate from the private GraphQL API host. */
 export const MONARCH_ORIGIN = "https://app.monarch.com";
 export const MONARCH_API_ORIGIN = "https://api.monarch.com";

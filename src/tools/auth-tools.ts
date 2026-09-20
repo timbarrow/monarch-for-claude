@@ -3,7 +3,8 @@ import type { SessionStore } from "../auth/session-store.js";
 import type { ConnectionStatus, MonarchSession } from "../auth/types.js";
 import type { MonarchClient } from "../monarch/client.js";
 import { MonarchError } from "../monarch/errors.js";
-import { authenticationLog } from "../logging.js";
+import { SERVER_VERSION } from "../config.js";
+import { authenticationLog, authenticationTrace } from "../logging.js";
 
 export class AuthService {
   private lastVerifiedAt: string | null = null;
@@ -18,26 +19,32 @@ export class AuthService {
       const session = await this.store.load();
       if (!session)
         return {
+          server_version: SERVER_VERSION,
           connected: false,
           auth_mode: "none",
           last_verified_at: null,
           reauthentication_required: true,
           diagnostic_code: this.lastDiagnostic ?? "NOT_CONNECTED",
+          diagnostic_trace: authenticationTrace(),
         };
       return {
+        server_version: SERVER_VERSION,
         connected: true,
         auth_mode: "browser_session",
         last_verified_at: this.lastVerifiedAt ?? session.capturedAt,
         reauthentication_required: false,
         diagnostic_code: "SESSION_STORED",
+        diagnostic_trace: authenticationTrace(),
       };
     } catch {
       return {
+        server_version: SERVER_VERSION,
         connected: false,
         auth_mode: "none",
         last_verified_at: null,
         reauthentication_required: true,
         diagnostic_code: "SESSION_UNREADABLE",
+        diagnostic_trace: authenticationTrace(),
       };
     }
   }

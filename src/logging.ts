@@ -29,6 +29,12 @@ const SAFE_EVENT = /^[A-Z0-9_]+$/;
 const FORBIDDEN_FIELD =
   /authorization(?!_present)|cookie(?!_present|_names)|token(?!_present)|password|secret|csrf(?!_present)|session/i;
 let authLogQueue = Promise.resolve();
+export interface AuthenticationTraceEntry {
+  timestamp: string;
+  event: string;
+  [key: string]: string | number | boolean | null;
+}
+const authenticationTraceEntries: AuthenticationTraceEntry[] = [];
 
 export function sanitizeAuthenticationFields(
   fields: Record<string, string | number | boolean | null>,
@@ -50,6 +56,17 @@ export function authenticationLog(
 ): void {
   if (!SAFE_EVENT.test(event)) return;
   const safeFields = sanitizeAuthenticationFields(fields);
+  const entry: AuthenticationTraceEntry = {
+    timestamp: new Date().toISOString(),
+    event,
+    ...safeFields,
+  };
+  authenticationTraceEntries.push(entry);
+  if (authenticationTraceEntries.length > 50)
+    authenticationTraceEntries.splice(
+      0,
+      authenticationTraceEntries.length - 50,
+    );
   authLogQueue = authLogQueue
     .then(async () => {
       const directory = path.join(localDataDirectory(), "logs");
@@ -65,15 +82,14 @@ export function authenticationLog(
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      const entry = JSON.stringify({
-        timestamp: new Date().toISOString(),
-        event,
-        ...safeFields,
-      });
-      await fs.appendFile(file, `${entry}\n`, {
+      await fs.appendFile(file, `${JSON.stringify(entry)}\n`, {
         encoding: "utf8",
         mode: 0o600,
       });
     })
     .catch(() => undefined);
+}
+
+export function authenticationTrace(): AuthenticationTraceEntry[] {
+  return authenticationTraceEntries.map((entry) => ({ ...entry }));
 }
