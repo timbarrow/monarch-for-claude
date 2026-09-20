@@ -47,6 +47,9 @@ export class AuthService {
         (code) => {
           this.lastDiagnostic = code;
         },
+        (code) => {
+          this.lastDiagnostic = code;
+        },
       );
       if (status !== "BROWSER_OPENED_SIGN_IN_DIRECTLY")
         this.lastDiagnostic = status;

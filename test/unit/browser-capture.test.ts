@@ -3,6 +3,7 @@ import type { spawn } from "node:child_process";
 import { MONARCH_GRAPHQL_URL } from "../../src/config.js";
 import {
   BrowserCapture,
+  isMonarchGraphqlUrl,
   isSuccessfulGraphqlResponse,
   selectMonarchPageTarget,
   sessionFromHeaders,
@@ -31,6 +32,13 @@ describe("browser capture guards", () => {
       false,
     );
     expect(isSuccessfulGraphqlResponse("not json")).toBe(false);
+    expect(isMonarchGraphqlUrl("https://api.monarch.com/graphql")).toBe(true);
+    expect(
+      isMonarchGraphqlUrl(
+        "https://api.monarch.com/graphql/?operation=Accounts",
+      ),
+    ).toBe(true);
+    expect(isMonarchGraphqlUrl("https://evil.example/graphql")).toBe(false);
   });
   it("supports cookie or token sessions and captures only approved replay headers", () => {
     expect(sessionFromHeaders({ Cookie: "session=synthetic" })).toMatchObject({

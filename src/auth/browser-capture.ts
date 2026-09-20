@@ -5,11 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
-import {
-  AUTH_CAPTURE_TTL_MS,
-  MONARCH_GRAPHQL_URL,
-  MONARCH_ORIGIN,
-} from "../config.js";
+import { AUTH_CAPTURE_TTL_MS, MONARCH_ORIGIN } from "../config.js";
 import { diagnostic } from "../logging.js";
 import { locateBrowser } from "./browser-locator.js";
 import type { MonarchSession } from "./types.js";
@@ -28,7 +24,6 @@ interface CdpEvent {
     headers?: Record<string, string>;
     response?: { url?: string; status?: number };
   };
-  result?: { body?: string; base64Encoded?: boolean };
 }
 
 function randomPort(): Promise<number> {
@@ -92,6 +87,20 @@ export function isSuccessfulGraphqlResponse(
   }
 }
 
+export function isMonarchGraphqlUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "api.monarch.com" &&
+      (url.pathname === "/graphql" || url.pathname === "/graphql/")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function sessionFromHeaders(
   headers: Record<string, string>,
 ): MonarchSession | undefined {
@@ -126,6 +135,7 @@ export class BrowserCapture {
   async begin(
     onSession: (session: MonarchSession) => Promise<void>,
     onFailure?: (code: string) => void,
+    onProgress?: (code: string) => void,
   ): Promise<string> {
     if (this.active) return "AUTHENTICATION_ALREADY_IN_PROGRESS";
     const browser = this.findBrowser();
@@ -147,7 +157,7 @@ export class BrowserCapture {
         ],
         { detached: false, stdio: "ignore", windowsHide: false },
       );
-      void this.capture(port, child, profile, onSession, onFailure);
+      void this.capture(port, child, profile, onSession, onFailure, onProgress);
       return "BROWSER_OPENED_SIGN_IN_DIRECTLY";
     } catch {
       this.active = false;
@@ -165,6 +175,7 @@ export class BrowserCapture {
     profile: string,
     onSession: (session: MonarchSession) => Promise<void>,
     onFailure?: (code: string) => void,
+    onProgress?: (code: string) => void,
   ): Promise<void> {
     let socket: WebSocket | undefined;
     let childFailed = false;
@@ -199,16 +210,11 @@ export class BrowserCapture {
         socket?.once("error", reject);
       });
       socket.send(JSON.stringify({ id: 1, method: "Network.enable" }));
+      onProgress?.("BROWSER_TARGET_ATTACHED");
       await new Promise<void>((resolve, reject) => {
         const requestUrls = new Map<string, string>();
         const requestHeaders = new Map<string, Record<string, string>>();
         const successfulResponses = new Set<string>();
-        let nextCommandId = 2;
-        const responseBodyRequests = new Map<number, string>();
-        const responseBodies = new Map<
-          string,
-          { body: string; base64Encoded: boolean }
-        >();
         const lastSessionAttempts = new Map<string, number>();
         let captured = false;
         let lastVerificationFailure: string | undefined;
@@ -220,20 +226,15 @@ export class BrowserCapture {
           },
           Math.max(1, deadline - Date.now()),
         );
-        const completeIfVerified = async (
-          requestId: string,
-          body: string,
-          base64Encoded: boolean,
-        ) => {
+        const completeIfVerified = async (requestId: string) => {
           if (
             captured ||
             !successfulResponses.has(requestId) ||
-            requestUrls.get(requestId) !== MONARCH_GRAPHQL_URL
+            !isMonarchGraphqlUrl(requestUrls.get(requestId))
           )
             return;
           const headers = requestHeaders.get(requestId);
-          if (!headers || !isSuccessfulGraphqlResponse(body, base64Encoded))
-            return;
+          if (!headers) return;
           const session = sessionFromHeaders(headers);
           if (!session) return;
           const sessionFingerprint = crypto
@@ -253,7 +254,7 @@ export class BrowserCapture {
           if (lastAttempt !== undefined && Date.now() - lastAttempt < 5_000)
             return;
           lastSessionAttempts.set(sessionFingerprint, Date.now());
-          responseBodies.delete(requestId);
+          onProgress?.("SESSION_CANDIDATE_SEEN");
           try {
             await onSession(session);
             captured = true;
@@ -267,6 +268,7 @@ export class BrowserCapture {
               error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
                 ? error.message
                 : "AUTH_VERIFICATION_FAILED";
+            onProgress?.("AUTH_VERIFICATION_RETRYING");
           }
         };
         socket?.once("close", () => {
@@ -286,13 +288,7 @@ export class BrowserCapture {
                 ...requestHeaders.get(requestId),
                 ...params.request.headers,
               });
-            const storedBody = responseBodies.get(requestId);
-            if (storedBody)
-              await completeIfVerified(
-                requestId,
-                storedBody.body,
-                storedBody.base64Encoded,
-              );
+            await completeIfVerified(requestId);
           }
           if (
             event.method === "Network.requestWillBeSentExtraInfo" &&
@@ -306,54 +302,17 @@ export class BrowserCapture {
           if (
             event.method === "Network.requestWillBeSentExtraInfo" &&
             requestId
-          ) {
-            const storedBody = responseBodies.get(requestId);
-            if (storedBody)
-              await completeIfVerified(
-                requestId,
-                storedBody.body,
-                storedBody.base64Encoded,
-              );
-          }
+          )
+            await completeIfVerified(requestId);
           if (
             event.method === "Network.responseReceived" &&
             requestId &&
-            params?.response?.url === MONARCH_GRAPHQL_URL &&
-            params.response.status === 200
-          )
-            successfulResponses.add(requestId);
-          if (
-            event.method === "Network.loadingFinished" &&
-            requestId &&
-            successfulResponses.has(requestId) &&
-            requestUrls.get(requestId) === MONARCH_GRAPHQL_URL
+            isMonarchGraphqlUrl(params?.response?.url) &&
+            params?.response?.status === 200
           ) {
-            const commandId = nextCommandId++;
-            responseBodyRequests.set(commandId, requestId);
-            socket?.send(
-              JSON.stringify({
-                id: commandId,
-                method: "Network.getResponseBody",
-                params: { requestId },
-              }),
-            );
-          }
-          const responseBodyRequestId =
-            event.id === undefined
-              ? undefined
-              : responseBodyRequests.get(event.id);
-          if (responseBodyRequestId && event.result?.body !== undefined) {
-            if (event.id !== undefined) responseBodyRequests.delete(event.id);
-            const responseBody = {
-              body: event.result.body,
-              base64Encoded: event.result.base64Encoded === true,
-            };
-            responseBodies.set(responseBodyRequestId, responseBody);
-            await completeIfVerified(
-              responseBodyRequestId,
-              responseBody.body,
-              responseBody.base64Encoded,
-            );
+            successfulResponses.add(requestId);
+            onProgress?.("MONARCH_GRAPHQL_SEEN");
+            await completeIfVerified(requestId);
           }
         });
       });

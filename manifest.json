@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "monarch-for-claude",
   "display_name": "Monarch for Claude",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Local Monarch read access and narrowly scoped classification-rule management.",
   "author": { "name": "Tim Barrow" },
   "license": "MIT",
