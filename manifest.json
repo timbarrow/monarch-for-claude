@@ -1,0 +1,19 @@
+{
+  "manifest_version": "0.3",
+  "name": "monarch-for-claude",
+  "display_name": "Monarch for Claude",
+  "version": "0.1.0",
+  "description": "Local Monarch read access and narrowly scoped classification-rule management.",
+  "author": { "name": "Tim Barrow" },
+  "license": "MIT",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/server.cjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/server.cjs"]
+    }
+  },
+  "compatibility": { "platforms": ["win32"] },
+  "icons": [{ "src": "assets/icon.svg", "size": "128x128" }]
+}

@@ -1,0 +1,42 @@
+{
+  "accounts": [
+    {
+      "id": "acct_1",
+      "displayName": "Synthetic Checking",
+      "institutionName": "Example Bank",
+      "type": "depository",
+      "subtype": "checking",
+      "currency": "USD",
+      "currentBalance": 1234.56,
+      "isClosed": false,
+      "isHidden": false,
+      "includeInNetWorth": true
+    }
+  ],
+  "transactions": [
+    {
+      "id": "txn_1",
+      "date": "2026-09-01",
+      "amount": -12.5,
+      "merchantName": "Synthetic Coffee",
+      "originalStatement": "SYNTHETIC COFFEE",
+      "account": { "id": "acct_1", "displayName": "Synthetic Checking" },
+      "category": { "id": "cat_food", "name": "Food" },
+      "tags": [{ "id": "tag_test", "name": "Synthetic", "color": "blue" }],
+      "pending": false,
+      "recurring": false,
+      "reviewed": true,
+      "hidden": false,
+      "notes": "Synthetic fixture only",
+      "splits": []
+    }
+  ],
+  "rules": [
+    {
+      "id": "rule_1",
+      "criteria": { "merchant": { "operator": "contains", "value": "Coffee" } },
+      "actions": { "set_category_id": "cat_food" },
+      "lastAppliedAt": null
+    }
+  ]
+}

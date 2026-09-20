@@ -1,0 +1,43 @@
+{
+  "name": "monarch-for-claude",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A narrow, local Windows MCP server for Monarch read access and safe classification-rule management.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "monarch-for-claude": "dist/server.cjs"
+  },
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:security": "vitest run test/security",
+    "build": "node scripts/build.mjs",
+    "inventory:graphql": "node scripts/inventory-graphql.mjs",
+    "package:mcpb": "node scripts/package.mjs",
+    "verify:bundle": "node scripts/verify-bundle.mjs",
+    "ci": "npm run format:check && npm run lint && npm test && npm run build && npm run inventory:graphql && npm run package:mcpb && npm run verify:bundle"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.2",
+    "ws": "^8.18.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/ws": "^8.5.14",
+    "archiver": "^7.0.1",
+    "esbuild": "^0.25.3",
+    "eslint": "^9.25.1",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.31.0",
+    "vitest": "^3.1.2",
+    "yauzl": "^3.1.3"
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+*.mcpb
+*.sha256
+auth.bin
+logs/

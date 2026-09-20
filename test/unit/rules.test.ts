@@ -1,0 +1,169 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  historicalImpact,
+  transactionMatchesRule,
+} from "../../src/rules/impact-preview.js";
+import { PreviewStore } from "../../src/rules/preview-store.js";
+import { previewChangeSchema, safeRuleSchema } from "../../src/rules/schema.js";
+import { normalizeTransaction } from "../../src/monarch/normalize.js";
+import { normalizeRule } from "../../src/monarch/normalize.js";
+import { normalizeExistingRule } from "../../src/rules/normalize.js";
+import {
+  assertPayloadSuccess,
+  RuleService,
+} from "../../src/tools/rule-tools.js";
+import type { ReadService } from "../../src/tools/read-tools.js";
+import type { MonarchClient } from "../../src/monarch/client.js";
+import type { Confirmation } from "../../src/rules/confirmation.js";
+
+const safeRule = {
+  criteria: { merchant: { operator: "contains" as const, value: "Coffee" } },
+  actions: { set_category_id: "cat_food" },
+};
+describe("safe rule boundary", () => {
+  it("accepts only explicit category/tag actions", () => {
+    expect(safeRuleSchema.parse(safeRule)).toEqual(safeRule);
+    expect(() =>
+      safeRuleSchema.parse({ ...safeRule, applyToExistingTransactions: true }),
+    ).toThrow();
+    expect(() =>
+      safeRuleSchema.parse({ ...safeRule, actions: { hide: true } }),
+    ).toThrow();
+    expect(() =>
+      safeRuleSchema.parse({
+        ...safeRule,
+        criteria: { Merchant: { operator: "contains", value: "Coffee" } },
+      }),
+    ).toThrow();
+  });
+  it("rejects GraphQL-like and unknown preview fields", () => {
+    expect(() =>
+      previewChangeSchema.parse({
+        kind: "create",
+        rule: safeRule,
+        query: "mutation DeleteTransaction",
+      }),
+    ).toThrow();
+    expect(() =>
+      previewChangeSchema.parse({
+        kind: "update",
+        target_rule_id: "rule_1",
+        rule: safeRule,
+        apply_to_existing_transactions: true,
+      }),
+    ).toThrow();
+  });
+  it("computes historical matches as inert read-only data", () => {
+    const transaction = normalizeTransaction({
+      id: "txn_1",
+      date: "2026-09-01",
+      amount: -12.5,
+      merchantName: "Synthetic Coffee",
+      originalStatement: "SYNTHETIC COFFEE",
+      account: { id: "acct_1", displayName: "Synthetic Checking" },
+      category: { id: "cat_food", name: "Food" },
+      tags: [],
+      pending: false,
+      recurring: false,
+      reviewed: true,
+      hidden: false,
+      splits: [],
+    });
+    expect(transactionMatchesRule(transaction, safeRule)).toBe(true);
+    expect(historicalImpact([transaction], safeRule)).toMatchObject({
+      count: 1,
+      representatives: [{ id: "txn_1" }],
+    });
+  });
+  it("pages through the full preview window before reporting match count", async () => {
+    const matchingTransaction = normalizeTransaction({
+      id: "txn_1",
+      date: "2026-09-01",
+      amount: -12.5,
+      merchantName: "Synthetic Coffee",
+    });
+    const search = vi
+      .fn()
+      .mockResolvedValueOnce({
+        transactions: [],
+        next_cursor: "cursor_2",
+        applied_date_range: {
+          start_date: "2026-08-21",
+          end_date: "2026-09-20",
+        },
+      })
+      .mockResolvedValueOnce({
+        transactions: [matchingTransaction],
+        next_cursor: null,
+        applied_date_range: {
+          start_date: "2026-08-21",
+          end_date: "2026-09-20",
+        },
+      });
+    const read = {
+      rawRules: async () => [],
+      search,
+      accounts: async () => [],
+      categories: async () => [{ id: "cat_food" }],
+      tags: async () => [],
+    } as unknown as ReadService;
+    const service = new RuleService(
+      read,
+      {} as MonarchClient,
+      new PreviewStore(),
+      {} as Confirmation,
+    );
+    await expect(
+      service.preview({ kind: "create", rule: safeRule }),
+    ).resolves.toMatchObject({ historical_match_count: 1 });
+    expect(search).toHaveBeenNthCalledWith(2, {
+      page_size: 200,
+      cursor: "cursor_2",
+      start_date: "2026-08-21",
+      end_date: "2026-09-20",
+    });
+  });
+  it("expires and consumes previews", () => {
+    let now = 0;
+    const store = new PreviewStore(() => now, 100);
+    const preview = store.create({ kind: "create", rule: safeRule }, "state");
+    expect(store.consume(preview.preview_id).used).toBe(true);
+    expect(() => store.consume(preview.preview_id)).toThrow(
+      "PREVIEW_INVALID_OR_EXPIRED",
+    );
+    const expired = store.create({ kind: "create", rule: safeRule }, "state");
+    now = 101;
+    expect(() => store.consume(expired.preview_id)).toThrow(
+      "PREVIEW_INVALID_OR_EXPIRED",
+    );
+  });
+  it("does not make existing broad-action rules editable", () => {
+    const rule = normalizeRule(
+      {
+        id: "rule_unsafe",
+        merchantNameCriteria: [{ operator: "contains", value: "Synthetic" }],
+        setCategoryAction: { id: "cat_food" },
+        linkGoalAction: { id: "goal_1" },
+      },
+      0,
+    );
+    expect(normalizeExistingRule(rule)).toMatchObject({
+      editable: false,
+      unsupported_actions: ["link_goal_action"],
+    });
+  });
+  it("rejects HTTP-200 mutation payload errors", () => {
+    expect(() =>
+      assertPayloadSuccess(
+        { createTransactionRuleV2: { errors: [{ message: "rejected" }] } },
+        "createTransactionRuleV2",
+      ),
+    ).toThrow("RULE_MUTATION_REJECTED");
+    expect(() =>
+      assertPayloadSuccess(
+        { createTransactionRuleV2: { errors: null } },
+        "createTransactionRuleV2",
+      ),
+    ).not.toThrow();
+  });
+});
