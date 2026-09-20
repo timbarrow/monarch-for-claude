@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { searchTransactionsInput } from "../../src/tools/contracts.js";
-import { redact } from "../../src/logging.js";
+import { redact, sanitizeAuthenticationFields } from "../../src/logging.js";
 import { toGraphqlSafeRule } from "../../src/rules/schema.js";
 
 describe("security boundary", () => {
@@ -32,5 +32,19 @@ describe("security boundary", () => {
     );
     expect(output).not.toContain("synthetic-secret");
     expect(output).not.toContain("session-token");
+    expect(
+      sanitizeAuthenticationFields({
+        authorization: "Token secret",
+        cookie: "session=secret",
+        csrfToken: "secret",
+        authorization_present: true,
+        cookie_names: "csrftoken,sessionid",
+        code: "AUTH_REQUIRED",
+      }),
+    ).toEqual({
+      authorization_present: true,
+      cookie_names: "csrftoken,sessionid",
+      code: "AUTH_REQUIRED",
+    });
   });
 });

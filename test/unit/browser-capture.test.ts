@@ -5,9 +5,11 @@ import {
   BrowserCapture,
   cookieHeaderForMonarchApi,
   isMonarchGraphqlUrl,
+  isMonarchLoginUrl,
   isSuccessfulGraphqlResponse,
   selectMonarchPageTarget,
   sessionFromHeaders,
+  tokenFromLoginResponse,
 } from "../../src/auth/browser-capture.js";
 
 describe("browser capture guards", () => {
@@ -40,6 +42,10 @@ describe("browser capture guards", () => {
       ),
     ).toBe(true);
     expect(isMonarchGraphqlUrl("https://evil.example/graphql")).toBe(false);
+    expect(isMonarchLoginUrl("https://api.monarch.com/auth/login/")).toBe(true);
+    expect(isMonarchLoginUrl("https://evil.example/auth/login/")).toBe(false);
+    expect(tokenFromLoginResponse('{"token":"synthetic"}')).toBe("synthetic");
+    expect(tokenFromLoginResponse('{"detail":"no token"}')).toBeUndefined();
   });
   it("supports cookie or token sessions and captures only approved replay headers", () => {
     expect(sessionFromHeaders({ Cookie: "session=synthetic" })).toMatchObject({

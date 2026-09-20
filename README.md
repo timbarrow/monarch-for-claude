@@ -23,6 +23,10 @@ Call `connect_monarch` in Claude. It opens a dedicated browser profile; sign in 
 
 Remove the extension in Claude Desktop. If desired, separately delete `%LOCALAPPDATA%\MonarchForClaude\auth.bin` and `%LOCALAPPDATA%\MonarchForClaude\logs` to remove encrypted local session data and diagnostics.
 
+## Authentication diagnostics
+
+Sanitized authentication events are written to `%LOCALAPPDATA%\MonarchForClaude\logs\authentication.log` and rotated at 1 MiB. The log contains stages, safe error codes, HTTP status codes, header-presence booleans, and cookie names only. It never records passwords, OTPs, authorization tokens, cookie values, CSRF values, GraphQL response data, or financial data.
+
 ## Live testing
 
 Live tests are intentionally absent from the default commands. Before use with a real account, validate the browser capture with the owner present and use an impossible, generated merchant criterion for rule write acceptance tests. Never commit real data or credentials.

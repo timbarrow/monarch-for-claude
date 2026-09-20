@@ -45,7 +45,7 @@ export function createServer(deps?: {
   );
   const server = new McpServer({
     name: "monarch-for-claude",
-    version: "0.1.5",
+    version: "0.1.6",
   });
   server.registerTool(
     "get_monarch_connection_status",

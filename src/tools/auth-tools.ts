@@ -3,6 +3,7 @@ import type { SessionStore } from "../auth/session-store.js";
 import type { ConnectionStatus, MonarchSession } from "../auth/types.js";
 import type { MonarchClient } from "../monarch/client.js";
 import { MonarchError } from "../monarch/errors.js";
+import { authenticationLog } from "../logging.js";
 
 export class AuthService {
   private lastVerifiedAt: string | null = null;
@@ -64,15 +65,28 @@ export class AuthService {
     }
   }
   private async verifyAndSave(session: MonarchSession): Promise<void> {
+    authenticationLog("AUTH_VERIFICATION_STARTED", {
+      authorization_present: !!session.authorization,
+      cookie_present: !!session.cookie,
+      csrf_present: !!session.csrfToken,
+      device_uuid_present: !!session.deviceUuid,
+    });
     await this.store.save(session);
     try {
       await this.client.read("GetAccounts");
       this.lastVerifiedAt = new Date().toISOString();
       this.lastDiagnostic = null;
+      authenticationLog("AUTH_VERIFICATION_SUCCEEDED");
     } catch (error) {
       await this.store.clear();
-      if (error instanceof MonarchError)
+      if (error instanceof MonarchError) {
+        authenticationLog("AUTH_VERIFICATION_FAILED", {
+          code: error.code,
+          http_status: error.status ?? null,
+        });
         throw new Error(`AUTH_VERIFICATION_${error.code}`);
+      }
+      authenticationLog("AUTH_VERIFICATION_FAILED", { code: "UNKNOWN" });
       throw new Error("AUTH_VERIFICATION_FAILED");
     }
   }

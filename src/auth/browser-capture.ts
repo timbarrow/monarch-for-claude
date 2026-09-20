@@ -10,7 +10,7 @@ import {
   MONARCH_GRAPHQL_URL,
   MONARCH_ORIGIN,
 } from "../config.js";
-import { diagnostic } from "../logging.js";
+import { authenticationLog, diagnostic } from "../logging.js";
 import { locateBrowser } from "./browser-locator.js";
 import type { MonarchSession } from "./types.js";
 
@@ -28,7 +28,11 @@ interface CdpEvent {
     headers?: Record<string, string>;
     response?: { url?: string; status?: number };
   };
-  result?: { cookies?: CdpCookie[] };
+  result?: {
+    cookies?: CdpCookie[];
+    body?: string;
+    base64Encoded?: boolean;
+  };
 }
 export interface CdpCookie {
   name?: string;
@@ -112,6 +116,42 @@ export function isMonarchGraphqlUrl(value: string | undefined): boolean {
   }
 }
 
+export function isMonarchLoginUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "api.monarch.com" &&
+      (url.pathname === "/auth/login" || url.pathname === "/auth/login/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function tokenFromLoginResponse(
+  body: string,
+  base64Encoded = false,
+): string | undefined {
+  try {
+    const text = base64Encoded
+      ? Buffer.from(body, "base64").toString("utf8")
+      : body;
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return undefined;
+    const token = (parsed as { token?: unknown }).token;
+    return typeof token === "string" &&
+      token.length > 0 &&
+      token.length <= 10_000
+      ? token
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function cookieHeaderForMonarchApi(
   cookies: CdpCookie[],
 ): string | undefined {
@@ -187,6 +227,7 @@ export class BrowserCapture {
     const browser = this.findBrowser();
     if (!browser) return "BROWSER_NOT_FOUND";
     this.active = true;
+    authenticationLog("AUTH_CAPTURE_STARTED");
     let profile: string | undefined;
     try {
       const port = await randomPort();
@@ -257,12 +298,15 @@ export class BrowserCapture {
       });
       socket.send(JSON.stringify({ id: 1, method: "Network.enable" }));
       onProgress?.("BROWSER_TARGET_ATTACHED");
+      authenticationLog("BROWSER_TARGET_ATTACHED");
       await new Promise<void>((resolve, reject) => {
         const requestUrls = new Map<string, string>();
         const requestHeaders = new Map<string, Record<string, string>>();
         const successfulResponses = new Set<string>();
         const cookieRequests = new Map<number, string>();
         const pendingCookieRequests = new Set<string>();
+        const successfulLoginResponses = new Set<string>();
+        const loginBodyRequests = new Map<number, string>();
         const lastSessionAttempts = new Map<string, number>();
         let nextCommandId = 2;
         let captured = false;
@@ -275,17 +319,8 @@ export class BrowserCapture {
           },
           Math.max(1, deadline - Date.now()),
         );
-        const completeIfVerified = async (requestId: string) => {
-          if (
-            captured ||
-            !successfulResponses.has(requestId) ||
-            !isMonarchGraphqlUrl(requestUrls.get(requestId))
-          )
-            return;
-          const headers = requestHeaders.get(requestId);
-          if (!headers) return;
-          const session = sessionFromHeaders(headers);
-          if (!session) return;
+        const verifySession = async (session: MonarchSession) => {
+          if (captured) return;
           const sessionFingerprint = crypto
             .createHash("sha256")
             .update(
@@ -306,10 +341,18 @@ export class BrowserCapture {
             return;
           lastSessionAttempts.set(sessionFingerprint, Date.now());
           onProgress?.("SESSION_CANDIDATE_SEEN");
+          authenticationLog("SESSION_CANDIDATE_SEEN", {
+            authorization_present: !!session.authorization,
+            cookie_present: !!session.cookie,
+            csrf_present: !!session.csrfToken,
+            device_uuid_present: !!session.deviceUuid,
+            monarch_client_present: !!session.monarchClient,
+          });
           try {
             await onSession(session);
             captured = true;
             clearTimeout(timer);
+            authenticationLog("AUTH_CAPTURE_VERIFIED");
             resolve();
           } catch (error) {
             // Login and MFA can produce successful public GraphQL traffic
@@ -320,7 +363,22 @@ export class BrowserCapture {
                 ? error.message
                 : "AUTH_VERIFICATION_FAILED";
             onProgress?.("AUTH_VERIFICATION_RETRYING");
+            authenticationLog("AUTH_VERIFICATION_RETRYING", {
+              code: lastVerificationFailure,
+            });
           }
+        };
+        const completeIfVerified = async (requestId: string) => {
+          if (
+            captured ||
+            !successfulResponses.has(requestId) ||
+            !isMonarchGraphqlUrl(requestUrls.get(requestId))
+          )
+            return;
+          const headers = requestHeaders.get(requestId);
+          if (!headers) return;
+          const session = sessionFromHeaders(headers);
+          if (session) await verifySession(session);
         };
         const requestApplicableCookies = (requestId: string) => {
           if (captured || pendingCookieRequests.has(requestId)) return;
@@ -360,9 +418,40 @@ export class BrowserCapture {
                 ...(deviceUuid ? { "device-uuid": deviceUuid } : {}),
               });
               onProgress?.("MONARCH_COOKIES_READ");
+              authenticationLog("MONARCH_COOKIES_READ", {
+                cookie_names: (event.result?.cookies ?? [])
+                  .map((item) => item.name)
+                  .filter((name): name is string => !!name)
+                  .sort()
+                  .join(","),
+              });
               await completeIfVerified(cookieRequestId);
             } else {
               onProgress?.("MONARCH_COOKIES_EMPTY");
+              authenticationLog("MONARCH_COOKIES_EMPTY");
+            }
+          }
+          const loginRequestId =
+            event.id === undefined
+              ? undefined
+              : loginBodyRequests.get(event.id);
+          if (loginRequestId && event.result?.body !== undefined) {
+            loginBodyRequests.delete(event.id as number);
+            const token = tokenFromLoginResponse(
+              event.result.body,
+              event.result.base64Encoded === true,
+            );
+            if (token) {
+              onProgress?.("MONARCH_LOGIN_TOKEN_SEEN");
+              authenticationLog("MONARCH_LOGIN_TOKEN_SEEN");
+              const headers = requestHeaders.get(loginRequestId) ?? {};
+              const session = sessionFromHeaders({
+                ...headers,
+                authorization: `Token ${token}`,
+              });
+              if (session) await verifySession(session);
+            } else {
+              authenticationLog("MONARCH_LOGIN_TOKEN_MISSING");
             }
           }
           const params = event.params;
@@ -399,8 +488,35 @@ export class BrowserCapture {
           ) {
             successfulResponses.add(requestId);
             onProgress?.("MONARCH_GRAPHQL_SEEN");
+            authenticationLog("MONARCH_GRAPHQL_SEEN", { http_status: 200 });
             await completeIfVerified(requestId);
             requestApplicableCookies(requestId);
+          }
+          if (
+            event.method === "Network.responseReceived" &&
+            requestId &&
+            isMonarchLoginUrl(params?.response?.url) &&
+            params?.response?.status === 200
+          ) {
+            successfulLoginResponses.add(requestId);
+            authenticationLog("MONARCH_LOGIN_RESPONSE_SEEN", {
+              http_status: 200,
+            });
+          }
+          if (
+            event.method === "Network.loadingFinished" &&
+            requestId &&
+            successfulLoginResponses.has(requestId)
+          ) {
+            const commandId = nextCommandId++;
+            loginBodyRequests.set(commandId, requestId);
+            socket?.send(
+              JSON.stringify({
+                id: commandId,
+                method: "Network.getResponseBody",
+                params: { requestId },
+              }),
+            );
           }
         });
       });
@@ -410,6 +526,7 @@ export class BrowserCapture {
           ? error.message
           : "BROWSER_CAPTURE_FAILED";
       diagnostic(code);
+      authenticationLog("AUTH_CAPTURE_FAILED", { code });
       onFailure?.(code);
     } finally {
       await cleanup();
