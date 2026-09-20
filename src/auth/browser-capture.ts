@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
@@ -100,10 +101,7 @@ export function sessionFromHeaders(
   const cookie = values.cookie;
   const authorization = values.authorization;
   const csrfToken = values["x-csrf-token"];
-  // Monarch's login flow can make successful public GraphQL requests with
-  // cookies before MFA has produced an API token. Only finish capture after
-  // observing an authorization-bearing request from the signed-in app.
-  if (!authorization) return undefined;
+  if (!cookie && !authorization) return undefined;
   return {
     cookie,
     authorization,
@@ -207,9 +205,19 @@ export class BrowserCapture {
         const successfulResponses = new Set<string>();
         let nextCommandId = 2;
         const responseBodyRequests = new Map<number, string>();
+        const responseBodies = new Map<
+          string,
+          { body: string; base64Encoded: boolean }
+        >();
+        const lastSessionAttempts = new Map<string, number>();
         let captured = false;
+        let lastVerificationFailure: string | undefined;
         const timer = setTimeout(
-          () => reject(new Error("BROWSER_CAPTURE_TIMEOUT")),
+          () => {
+            reject(
+              new Error(lastVerificationFailure ?? "BROWSER_CAPTURE_TIMEOUT"),
+            );
+          },
           Math.max(1, deadline - Date.now()),
         );
         const completeIfVerified = async (
@@ -228,15 +236,44 @@ export class BrowserCapture {
             return;
           const session = sessionFromHeaders(headers);
           if (!session) return;
-          captured = true;
-          clearTimeout(timer);
+          const sessionFingerprint = crypto
+            .createHash("sha256")
+            .update(
+              JSON.stringify([
+                session.cookie,
+                session.authorization,
+                session.csrfToken,
+                session.clientPlatform,
+                session.deviceUuid,
+                session.cioClientPlatform,
+              ]),
+            )
+            .digest("hex");
+          const lastAttempt = lastSessionAttempts.get(sessionFingerprint);
+          if (lastAttempt !== undefined && Date.now() - lastAttempt < 5_000)
+            return;
+          lastSessionAttempts.set(sessionFingerprint, Date.now());
+          responseBodies.delete(requestId);
           try {
             await onSession(session);
+            captured = true;
+            clearTimeout(timer);
             resolve();
           } catch (error) {
-            reject(error);
+            // Login and MFA can produce successful public GraphQL traffic
+            // before the final authenticated cookie/token is installed. Keep
+            // watching for a changed session instead of closing the browser.
+            lastVerificationFailure =
+              error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
+                ? error.message
+                : "AUTH_VERIFICATION_FAILED";
           }
         };
+        socket?.once("close", () => {
+          reject(
+            new Error(lastVerificationFailure ?? "BROWSER_CAPTURE_CLOSED"),
+          );
+        });
         socket?.on("message", async (data) => {
           const event = JSON.parse(data.toString()) as CdpEvent;
           const params = event.params;
@@ -249,6 +286,13 @@ export class BrowserCapture {
                 ...requestHeaders.get(requestId),
                 ...params.request.headers,
               });
+            const storedBody = responseBodies.get(requestId);
+            if (storedBody)
+              await completeIfVerified(
+                requestId,
+                storedBody.body,
+                storedBody.base64Encoded,
+              );
           }
           if (
             event.method === "Network.requestWillBeSentExtraInfo" &&
@@ -259,6 +303,18 @@ export class BrowserCapture {
               ...requestHeaders.get(requestId),
               ...params.headers,
             });
+          if (
+            event.method === "Network.requestWillBeSentExtraInfo" &&
+            requestId
+          ) {
+            const storedBody = responseBodies.get(requestId);
+            if (storedBody)
+              await completeIfVerified(
+                requestId,
+                storedBody.body,
+                storedBody.base64Encoded,
+              );
+          }
           if (
             event.method === "Network.responseReceived" &&
             requestId &&
@@ -286,12 +342,19 @@ export class BrowserCapture {
             event.id === undefined
               ? undefined
               : responseBodyRequests.get(event.id);
-          if (responseBodyRequestId && event.result?.body !== undefined)
+          if (responseBodyRequestId && event.result?.body !== undefined) {
+            if (event.id !== undefined) responseBodyRequests.delete(event.id);
+            const responseBody = {
+              body: event.result.body,
+              base64Encoded: event.result.base64Encoded === true,
+            };
+            responseBodies.set(responseBodyRequestId, responseBody);
             await completeIfVerified(
               responseBodyRequestId,
-              event.result.body,
-              event.result.base64Encoded === true,
+              responseBody.body,
+              responseBody.base64Encoded,
             );
+          }
         });
       });
     } catch (error) {

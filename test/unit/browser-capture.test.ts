@@ -32,8 +32,11 @@ describe("browser capture guards", () => {
     );
     expect(isSuccessfulGraphqlResponse("not json")).toBe(false);
   });
-  it("waits for an API token and captures only approved replay headers", () => {
-    expect(sessionFromHeaders({ Cookie: "pre-mfa-cookie" })).toBeUndefined();
+  it("supports cookie or token sessions and captures only approved replay headers", () => {
+    expect(sessionFromHeaders({ Cookie: "session=synthetic" })).toMatchObject({
+      cookie: "session=synthetic",
+    });
+    expect(sessionFromHeaders({ "Client-Platform": "web" })).toBeUndefined();
     expect(
       sessionFromHeaders({
         Authorization: "Token synthetic",
