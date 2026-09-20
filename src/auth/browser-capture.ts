@@ -137,6 +137,14 @@ export function cookieHeaderForMonarchApi(
     : undefined;
 }
 
+function cookieValue(header: string, name: string): string | undefined {
+  const prefix = `${name}=`;
+  const pair = header
+    .split("; ")
+    .find((candidate) => candidate.startsWith(prefix));
+  return pair?.slice(prefix.length);
+}
+
 export function sessionFromHeaders(
   headers: Record<string, string>,
 ): MonarchSession | undefined {
@@ -145,7 +153,7 @@ export function sessionFromHeaders(
   );
   const cookie = values.cookie;
   const authorization = values.authorization;
-  const csrfToken = values["x-csrf-token"];
+  const csrfToken = values["x-csrftoken"] ?? values["x-csrf-token"];
   if (!cookie && !authorization) return undefined;
   return {
     cookie,
@@ -154,6 +162,8 @@ export function sessionFromHeaders(
     clientPlatform: values["client-platform"],
     deviceUuid: values["device-uuid"],
     cioClientPlatform: values["x-cio-client-platform"],
+    monarchClient: values["monarch-client"],
+    monarchClientVersion: values["monarch-client-version"],
     capturedAt: new Date().toISOString(),
   };
 }
@@ -286,6 +296,8 @@ export class BrowserCapture {
                 session.clientPlatform,
                 session.deviceUuid,
                 session.cioClientPlatform,
+                session.monarchClient,
+                session.monarchClientVersion,
               ]),
             )
             .digest("hex");
@@ -339,9 +351,13 @@ export class BrowserCapture {
               event.result?.cookies ?? [],
             );
             if (cookie) {
+              const csrfToken = cookieValue(cookie, "csrftoken");
+              const deviceUuid = cookieValue(cookie, "monarchDeviceUUID");
               requestHeaders.set(cookieRequestId, {
                 ...requestHeaders.get(cookieRequestId),
                 cookie,
+                ...(csrfToken ? { "x-csrftoken": csrfToken } : {}),
+                ...(deviceUuid ? { "device-uuid": deviceUuid } : {}),
               });
               onProgress?.("MONARCH_COOKIES_READ");
               await completeIfVerified(cookieRequestId);

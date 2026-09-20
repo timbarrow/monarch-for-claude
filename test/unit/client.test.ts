@@ -24,6 +24,9 @@ describe("MonarchClient", () => {
           clientPlatform: "web",
           deviceUuid: "device_1",
           cioClientPlatform: "web",
+          csrfToken: "csrf_1",
+          monarchClient: "monarch-core-web-app-graphql",
+          monarchClientVersion: "2026.09.20",
           capturedAt: "2026-01-01T00:00:00.000Z",
         }),
         clear: async () => undefined,
@@ -37,7 +40,10 @@ describe("MonarchClient", () => {
     expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
       "client-platform": "web",
       "device-uuid": "device_1",
+      "x-csrftoken": "csrf_1",
       "x-cio-client-platform": "web",
+      "monarch-client": "monarch-core-web-app-graphql",
+      "monarch-client-version": "2026.09.20",
     });
   });
   it("clears expired auth and never treats a mutation as retryable", async () => {

@@ -47,17 +47,22 @@ export class MonarchClient {
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
       try {
         const headers: Record<string, string> = {
+          accept: "application/json",
           "content-type": "application/json",
           "client-platform": session.clientPlatform ?? "web",
+          "monarch-client":
+            session.monarchClient ?? "monarch-core-web-app-graphql",
           origin: "https://app.monarch.com",
         };
         if (session.cookie) headers.cookie = session.cookie;
         if (session.authorization)
           headers.authorization = session.authorization;
-        if (session.csrfToken) headers["x-csrf-token"] = session.csrfToken;
+        if (session.csrfToken) headers["x-csrftoken"] = session.csrfToken;
         if (session.deviceUuid) headers["device-uuid"] = session.deviceUuid;
         if (session.cioClientPlatform)
           headers["x-cio-client-platform"] = session.cioClientPlatform;
+        if (session.monarchClientVersion)
+          headers["monarch-client-version"] = session.monarchClientVersion;
         const response = await this.fetchImpl(MONARCH_GRAPHQL_URL, {
           method: "POST",
           headers,

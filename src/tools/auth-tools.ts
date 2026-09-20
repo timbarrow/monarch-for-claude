@@ -2,6 +2,7 @@ import type { BrowserCapture } from "../auth/browser-capture.js";
 import type { SessionStore } from "../auth/session-store.js";
 import type { ConnectionStatus, MonarchSession } from "../auth/types.js";
 import type { MonarchClient } from "../monarch/client.js";
+import { MonarchError } from "../monarch/errors.js";
 
 export class AuthService {
   private lastVerifiedAt: string | null = null;
@@ -68,8 +69,10 @@ export class AuthService {
       await this.client.read("GetAccounts");
       this.lastVerifiedAt = new Date().toISOString();
       this.lastDiagnostic = null;
-    } catch {
+    } catch (error) {
       await this.store.clear();
+      if (error instanceof MonarchError)
+        throw new Error(`AUTH_VERIFICATION_${error.code}`);
       throw new Error("AUTH_VERIFICATION_FAILED");
     }
   }

@@ -7,6 +7,8 @@ export interface MonarchSession {
   clientPlatform?: string;
   deviceUuid?: string;
   cioClientPlatform?: string;
+  monarchClient?: string;
+  monarchClientVersion?: string;
   capturedAt: string;
 }
 

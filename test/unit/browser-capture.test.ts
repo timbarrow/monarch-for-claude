@@ -52,6 +52,9 @@ describe("browser capture guards", () => {
         Cookie: "session=synthetic",
         "Client-Platform": "web",
         "Device-Uuid": "device_1",
+        "X-CSRFToken": "csrf_1",
+        "Monarch-Client": "monarch-core-web-app-graphql",
+        "Monarch-Client-Version": "2026.09.20",
         "X-Cio-Client-Platform": "web",
         "X-Unapproved-Secret": "do-not-store",
       }),
@@ -60,6 +63,9 @@ describe("browser capture guards", () => {
       cookie: "session=synthetic",
       clientPlatform: "web",
       deviceUuid: "device_1",
+      csrfToken: "csrf_1",
+      monarchClient: "monarch-core-web-app-graphql",
+      monarchClientVersion: "2026.09.20",
       cioClientPlatform: "web",
     });
     expect(
