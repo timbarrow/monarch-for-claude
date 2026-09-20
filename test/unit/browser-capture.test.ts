@@ -3,6 +3,7 @@ import type { spawn } from "node:child_process";
 import { MONARCH_GRAPHQL_URL } from "../../src/config.js";
 import {
   BrowserCapture,
+  cookieHeaderForMonarchApi,
   isMonarchGraphqlUrl,
   isSuccessfulGraphqlResponse,
   selectMonarchPageTarget,
@@ -69,6 +70,30 @@ describe("browser capture guards", () => {
         }),
       ),
     ).not.toContain("do-not-store");
+  });
+  it("builds a cookie header only from cookies applicable to the Monarch API", () => {
+    expect(
+      cookieHeaderForMonarchApi([
+        {
+          name: "session",
+          value: "synthetic",
+          domain: ".monarch.com",
+          path: "/",
+        },
+        {
+          name: "app_only",
+          value: "excluded",
+          domain: "app.monarch.com",
+          path: "/",
+        },
+        {
+          name: "wrong_path",
+          value: "excluded",
+          domain: ".monarch.com",
+          path: "/settings",
+        },
+      ]),
+    ).toBe("session=synthetic");
   });
   it("clears the in-progress guard when browser launch setup fails", async () => {
     const launch = vi.fn(() => {

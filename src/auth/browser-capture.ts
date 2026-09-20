@@ -5,7 +5,11 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
-import { AUTH_CAPTURE_TTL_MS, MONARCH_ORIGIN } from "../config.js";
+import {
+  AUTH_CAPTURE_TTL_MS,
+  MONARCH_GRAPHQL_URL,
+  MONARCH_ORIGIN,
+} from "../config.js";
 import { diagnostic } from "../logging.js";
 import { locateBrowser } from "./browser-locator.js";
 import type { MonarchSession } from "./types.js";
@@ -24,6 +28,13 @@ interface CdpEvent {
     headers?: Record<string, string>;
     response?: { url?: string; status?: number };
   };
+  result?: { cookies?: CdpCookie[] };
+}
+export interface CdpCookie {
+  name?: string;
+  value?: string;
+  domain?: string;
+  path?: string;
 }
 
 function randomPort(): Promise<number> {
@@ -99,6 +110,31 @@ export function isMonarchGraphqlUrl(value: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+export function cookieHeaderForMonarchApi(
+  cookies: CdpCookie[],
+): string | undefined {
+  const apiHost = "api.monarch.com";
+  const apiPath = "/graphql";
+  const applicable = cookies
+    .filter((cookie) => {
+      const domain = cookie.domain?.replace(/^\./, "").toLowerCase();
+      const cookiePath = cookie.path ?? "/";
+      return (
+        !!cookie.name &&
+        cookie.value !== undefined &&
+        !!domain &&
+        (apiHost === domain || apiHost.endsWith(`.${domain}`)) &&
+        apiPath.startsWith(cookiePath) &&
+        /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(cookie.name) &&
+        !/[;\r\n]/.test(cookie.value)
+      );
+    })
+    .sort((a, b) => (b.path?.length ?? 1) - (a.path?.length ?? 1));
+  return applicable.length
+    ? applicable.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ")
+    : undefined;
 }
 
 export function sessionFromHeaders(
@@ -215,7 +251,10 @@ export class BrowserCapture {
         const requestUrls = new Map<string, string>();
         const requestHeaders = new Map<string, Record<string, string>>();
         const successfulResponses = new Set<string>();
+        const cookieRequests = new Map<number, string>();
+        const pendingCookieRequests = new Set<string>();
         const lastSessionAttempts = new Map<string, number>();
+        let nextCommandId = 2;
         let captured = false;
         let lastVerificationFailure: string | undefined;
         const timer = setTimeout(
@@ -271,6 +310,19 @@ export class BrowserCapture {
             onProgress?.("AUTH_VERIFICATION_RETRYING");
           }
         };
+        const requestApplicableCookies = (requestId: string) => {
+          if (captured || pendingCookieRequests.has(requestId)) return;
+          const commandId = nextCommandId++;
+          pendingCookieRequests.add(requestId);
+          cookieRequests.set(commandId, requestId);
+          socket?.send(
+            JSON.stringify({
+              id: commandId,
+              method: "Network.getCookies",
+              params: { urls: [MONARCH_GRAPHQL_URL, MONARCH_ORIGIN] },
+            }),
+          );
+        };
         socket?.once("close", () => {
           reject(
             new Error(lastVerificationFailure ?? "BROWSER_CAPTURE_CLOSED"),
@@ -278,6 +330,25 @@ export class BrowserCapture {
         });
         socket?.on("message", async (data) => {
           const event = JSON.parse(data.toString()) as CdpEvent;
+          const cookieRequestId =
+            event.id === undefined ? undefined : cookieRequests.get(event.id);
+          if (cookieRequestId) {
+            cookieRequests.delete(event.id as number);
+            pendingCookieRequests.delete(cookieRequestId);
+            const cookie = cookieHeaderForMonarchApi(
+              event.result?.cookies ?? [],
+            );
+            if (cookie) {
+              requestHeaders.set(cookieRequestId, {
+                ...requestHeaders.get(cookieRequestId),
+                cookie,
+              });
+              onProgress?.("MONARCH_COOKIES_READ");
+              await completeIfVerified(cookieRequestId);
+            } else {
+              onProgress?.("MONARCH_COOKIES_EMPTY");
+            }
+          }
           const params = event.params;
           const requestId = params?.requestId;
           if (event.method === "Network.requestWillBeSent" && requestId) {
@@ -313,6 +384,7 @@ export class BrowserCapture {
             successfulResponses.add(requestId);
             onProgress?.("MONARCH_GRAPHQL_SEEN");
             await completeIfVerified(requestId);
+            requestApplicableCookies(requestId);
           }
         });
       });
