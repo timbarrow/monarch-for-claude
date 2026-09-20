@@ -4,6 +4,9 @@ export interface MonarchSession {
   cookie?: string;
   authorization?: string;
   csrfToken?: string;
+  clientPlatform?: string;
+  deviceUuid?: string;
+  cioClientPlatform?: string;
   capturedAt: string;
 }
 

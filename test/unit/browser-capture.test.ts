@@ -5,6 +5,7 @@ import {
   BrowserCapture,
   isSuccessfulGraphqlResponse,
   selectMonarchPageTarget,
+  sessionFromHeaders,
 } from "../../src/auth/browser-capture.js";
 
 describe("browser capture guards", () => {
@@ -30,6 +31,33 @@ describe("browser capture guards", () => {
       false,
     );
     expect(isSuccessfulGraphqlResponse("not json")).toBe(false);
+  });
+  it("waits for an API token and captures only approved replay headers", () => {
+    expect(sessionFromHeaders({ Cookie: "pre-mfa-cookie" })).toBeUndefined();
+    expect(
+      sessionFromHeaders({
+        Authorization: "Token synthetic",
+        Cookie: "session=synthetic",
+        "Client-Platform": "web",
+        "Device-Uuid": "device_1",
+        "X-Cio-Client-Platform": "web",
+        "X-Unapproved-Secret": "do-not-store",
+      }),
+    ).toMatchObject({
+      authorization: "Token synthetic",
+      cookie: "session=synthetic",
+      clientPlatform: "web",
+      deviceUuid: "device_1",
+      cioClientPlatform: "web",
+    });
+    expect(
+      JSON.stringify(
+        sessionFromHeaders({
+          Authorization: "Token synthetic",
+          "X-Unapproved-Secret": "do-not-store",
+        }),
+      ),
+    ).not.toContain("do-not-store");
   });
   it("clears the in-progress guard when browser launch setup fails", async () => {
     const launch = vi.fn(() => {

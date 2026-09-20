@@ -91,7 +91,7 @@ export function isSuccessfulGraphqlResponse(
   }
 }
 
-function sessionFromHeaders(
+export function sessionFromHeaders(
   headers: Record<string, string>,
 ): MonarchSession | undefined {
   const values = Object.fromEntries(
@@ -100,11 +100,17 @@ function sessionFromHeaders(
   const cookie = values.cookie;
   const authorization = values.authorization;
   const csrfToken = values["x-csrf-token"];
-  if (!cookie && !authorization) return undefined;
+  // Monarch's login flow can make successful public GraphQL requests with
+  // cookies before MFA has produced an API token. Only finish capture after
+  // observing an authorization-bearing request from the signed-in app.
+  if (!authorization) return undefined;
   return {
     cookie,
     authorization,
     csrfToken,
+    clientPlatform: values["client-platform"],
+    deviceUuid: values["device-uuid"],
+    cioClientPlatform: values["x-cio-client-platform"],
     capturedAt: new Date().toISOString(),
   };
 }
@@ -121,6 +127,7 @@ export class BrowserCapture {
 
   async begin(
     onSession: (session: MonarchSession) => Promise<void>,
+    onFailure?: (code: string) => void,
   ): Promise<string> {
     if (this.active) return "AUTHENTICATION_ALREADY_IN_PROGRESS";
     const browser = this.findBrowser();
@@ -142,7 +149,7 @@ export class BrowserCapture {
         ],
         { detached: false, stdio: "ignore", windowsHide: false },
       );
-      void this.capture(port, child, profile, onSession);
+      void this.capture(port, child, profile, onSession, onFailure);
       return "BROWSER_OPENED_SIGN_IN_DIRECTLY";
     } catch {
       this.active = false;
@@ -159,6 +166,7 @@ export class BrowserCapture {
     child: ChildProcess,
     profile: string,
     onSession: (session: MonarchSession) => Promise<void>,
+    onFailure?: (code: string) => void,
   ): Promise<void> {
     let socket: WebSocket | undefined;
     let childFailed = false;
@@ -237,14 +245,20 @@ export class BrowserCapture {
             const url = params?.request?.url;
             if (url) requestUrls.set(requestId, url);
             if (params?.request?.headers)
-              requestHeaders.set(requestId, params.request.headers);
+              requestHeaders.set(requestId, {
+                ...requestHeaders.get(requestId),
+                ...params.request.headers,
+              });
           }
           if (
             event.method === "Network.requestWillBeSentExtraInfo" &&
             requestId &&
             params?.headers
           )
-            requestHeaders.set(requestId, params.headers);
+            requestHeaders.set(requestId, {
+              ...requestHeaders.get(requestId),
+              ...params.headers,
+            });
           if (
             event.method === "Network.responseReceived" &&
             requestId &&
@@ -281,9 +295,12 @@ export class BrowserCapture {
         });
       });
     } catch (error) {
-      diagnostic(
-        error instanceof Error ? error.message : "BROWSER_CAPTURE_FAILED",
-      );
+      const code =
+        error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
+          ? error.message
+          : "BROWSER_CAPTURE_FAILED";
+      diagnostic(code);
+      onFailure?.(code);
     } finally {
       await cleanup();
     }

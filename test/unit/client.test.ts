@@ -21,6 +21,9 @@ describe("MonarchClient", () => {
       {
         load: async () => ({
           cookie: "synthetic",
+          clientPlatform: "web",
+          deviceUuid: "device_1",
+          cioClientPlatform: "web",
           capturedAt: "2026-01-01T00:00:00.000Z",
         }),
         clear: async () => undefined,
@@ -31,6 +34,11 @@ describe("MonarchClient", () => {
     expect(fetchMock.mock.calls[0][0]).toBe(MONARCH_GRAPHQL_URL);
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(body.operationName).toBe("GetAccounts");
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
+      "client-platform": "web",
+      "device-uuid": "device_1",
+      "x-cio-client-platform": "web",
+    });
   });
   it("clears expired auth and never treats a mutation as retryable", async () => {
     const clear = vi.fn(async () => undefined);

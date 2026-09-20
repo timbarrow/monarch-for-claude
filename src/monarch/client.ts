@@ -48,12 +48,16 @@ export class MonarchClient {
       try {
         const headers: Record<string, string> = {
           "content-type": "application/json",
+          "client-platform": session.clientPlatform ?? "web",
           origin: "https://app.monarch.com",
         };
         if (session.cookie) headers.cookie = session.cookie;
         if (session.authorization)
           headers.authorization = session.authorization;
         if (session.csrfToken) headers["x-csrf-token"] = session.csrfToken;
+        if (session.deviceUuid) headers["device-uuid"] = session.deviceUuid;
+        if (session.cioClientPlatform)
+          headers["x-cio-client-platform"] = session.cioClientPlatform;
         const response = await this.fetchImpl(MONARCH_GRAPHQL_URL, {
           method: "POST",
           headers,
