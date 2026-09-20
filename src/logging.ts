@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { localDataDirectory } from "./config.js";
+import { localDataDirectory, SERVER_VERSION } from "./config.js";
 
 const SECRET_PATTERN =
   /(?:authorization|cookie|set-cookie|token|password|session|csrf)[=:]\s*(?:Bearer\s+)?[^\s,;]+/gi;
@@ -25,6 +25,8 @@ export function safeErrorCode(error: unknown): string {
 }
 
 const AUTH_LOG_MAX_BYTES = 1024 * 1024;
+const AUTH_TRACE_MAX_ENTRIES = 150;
+let authLogWriteFailureReported = false;
 const SAFE_EVENT = /^[A-Z0-9_]+$/;
 const FORBIDDEN_FIELD =
   /authorization(?!_present)|cookie(?!_present|_names)|token(?!_present)|password|secret|csrf(?!_present)|session/i;
@@ -44,7 +46,7 @@ export function sanitizeAuthenticationFields(
     if (FORBIDDEN_FIELD.test(key)) continue;
     safeFields[key] =
       typeof value === "string"
-        ? value.replace(/[\r\n]/g, " ").slice(0, 200)
+        ? value.replace(/[\r\n]/g, " ").slice(0, 400)
         : value;
   }
   return safeFields;
@@ -62,10 +64,10 @@ export function authenticationLog(
     ...safeFields,
   };
   authenticationTraceEntries.push(entry);
-  if (authenticationTraceEntries.length > 50)
+  if (authenticationTraceEntries.length > AUTH_TRACE_MAX_ENTRIES)
     authenticationTraceEntries.splice(
       0,
-      authenticationTraceEntries.length - 50,
+      authenticationTraceEntries.length - AUTH_TRACE_MAX_ENTRIES,
     );
   authLogQueue = authLogQueue
     .then(async () => {
@@ -82,12 +84,40 @@ export function authenticationLog(
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      await fs.appendFile(file, `${JSON.stringify(entry)}\n`, {
+      const fileEntry = { version: SERVER_VERSION, ...entry };
+      await fs.appendFile(file, `${JSON.stringify(fileEntry)}\n`, {
         encoding: "utf8",
         mode: 0o600,
       });
     })
-    .catch(() => undefined);
+    .catch((error: unknown) => {
+      // Never let logging break authentication, but do not fail silently
+      // either: surface the (safe) reason once in the in-memory trace, which
+      // get_monarch_connection_status returns, so a missing file is explained.
+      if (authLogWriteFailureReported) return;
+      authLogWriteFailureReported = true;
+      const errno = (error as NodeJS.ErrnoException | undefined)?.code;
+      const message = error instanceof Error ? error.message : undefined;
+      const candidate = errno ?? message;
+      const code =
+        typeof candidate === "string" && SAFE_EVENT.test(candidate)
+          ? candidate
+          : "UNKNOWN";
+      authenticationTraceEntries.push({
+        timestamp: new Date().toISOString(),
+        event: "AUTH_LOG_FILE_WRITE_FAILED",
+        code,
+      });
+      diagnostic("AUTH_LOG_FILE_WRITE_FAILED", { code });
+    });
+}
+
+export function authenticationLogFile(): string | undefined {
+  try {
+    return path.join(localDataDirectory(), "logs", "authentication.log");
+  } catch {
+    return undefined;
+  }
 }
 
 export function authenticationTrace(): AuthenticationTraceEntry[] {

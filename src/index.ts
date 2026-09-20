@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { BrowserCapture } from "./auth/browser-capture.js";
 import { SessionStore } from "./auth/session-store.js";
 import { SERVER_VERSION } from "./config.js";
+import { authenticationLog, authenticationLogFile } from "./logging.js";
 import { MonarchClient } from "./monarch/client.js";
 import { LoopbackConfirmation } from "./rules/confirmation.js";
 import { PreviewStore } from "./rules/preview-store.js";
@@ -228,6 +229,14 @@ export function createServer(deps?: {
 }
 
 async function start(): Promise<void> {
+  authenticationLog("SERVER_STARTED", {
+    server_version: SERVER_VERSION,
+    node_version: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+    localappdata_present: !!process.env.LOCALAPPDATA,
+    log_file: authenticationLogFile() ?? null,
+  });
   const server = createServer();
   await server.connect(new StdioServerTransport());
 }

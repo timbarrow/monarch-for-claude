@@ -10,7 +10,7 @@ import {
   MONARCH_GRAPHQL_URL,
   MONARCH_ORIGIN,
 } from "../config.js";
-import { authenticationLog, diagnostic } from "../logging.js";
+import { authenticationLog, diagnostic, safeErrorCode } from "../logging.js";
 import { locateBrowser } from "./browser-locator.js";
 import type { MonarchSession } from "./types.js";
 
@@ -39,6 +39,9 @@ export interface CdpCookie {
   value?: string;
   domain?: string;
   path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: string;
 }
 
 function randomPort(): Promise<number> {
@@ -177,6 +180,61 @@ export function cookieHeaderForMonarchApi(
     : undefined;
 }
 
+const SAFE_TOKEN = /^[A-Za-z0-9!#$%&'*+\-.^_`|~:/]+$/;
+
+/** URL host and path only; query strings and fragments can carry secrets. */
+export function safeUrlParts(value: string | undefined): {
+  host: string;
+  path: string;
+} {
+  if (!value) return { host: "unknown", path: "unknown" };
+  try {
+    const url = new URL(value);
+    return { host: url.hostname, path: url.pathname };
+  } catch {
+    return { host: "unparseable", path: "unparseable" };
+  }
+}
+
+/** Header names only, lowercased and sorted; values are never read. */
+export function headerNamesOf(
+  headers: Record<string, string> | undefined,
+): string {
+  return Object.keys(headers ?? {})
+    .map((name) => name.toLowerCase())
+    .filter((name) => SAFE_TOKEN.test(name))
+    .sort()
+    .join(",");
+}
+
+/** Cookie name, scope and flags only; the value is never copied. */
+export function cookieMetadata(
+  cookies: CdpCookie[],
+): Array<Record<string, string | boolean>> {
+  return cookies.map((cookie) => ({
+    name: cookie.name && SAFE_TOKEN.test(cookie.name) ? cookie.name : "invalid",
+    domain:
+      cookie.domain && SAFE_TOKEN.test(cookie.domain)
+        ? cookie.domain
+        : "invalid",
+    path: cookie.path && SAFE_TOKEN.test(cookie.path) ? cookie.path : "invalid",
+    secure: cookie.secure === true,
+    http_only: cookie.httpOnly === true,
+    same_site:
+      cookie.sameSite && SAFE_TOKEN.test(cookie.sameSite)
+        ? cookie.sameSite
+        : "unset",
+    sent_to_api: cookieHeaderForMonarchApi([cookie]) !== undefined,
+  }));
+}
+
+function browserKind(executable: string): string {
+  const name = executable.split(/[\\/]/).pop()?.toLowerCase();
+  if (name === "msedge.exe") return "edge";
+  if (name === "chrome.exe") return "chrome";
+  return "other";
+}
+
 function cookieValue(header: string, name: string): string | undefined {
   const prefix = `${name}=`;
   const pair = header
@@ -225,9 +283,17 @@ export class BrowserCapture {
   ): Promise<string> {
     if (this.active) return "AUTHENTICATION_ALREADY_IN_PROGRESS";
     const browser = this.findBrowser();
-    if (!browser) return "BROWSER_NOT_FOUND";
+    if (!browser) {
+      authenticationLog("BROWSER_NOT_FOUND");
+      return "BROWSER_NOT_FOUND";
+    }
     this.active = true;
-    authenticationLog("AUTH_CAPTURE_STARTED");
+    authenticationLog("AUTH_CAPTURE_STARTED", {
+      browser: browserKind(browser),
+      ttl_ms: this.ttlMs,
+      node_version: process.versions.node,
+      platform: process.platform,
+    });
     let profile: string | undefined;
     try {
       const port = await randomPort();
@@ -244,9 +310,13 @@ export class BrowserCapture {
         ],
         { detached: false, stdio: "ignore", windowsHide: false },
       );
+      authenticationLog("BROWSER_LAUNCHED", { debug_port: port });
       void this.capture(port, child, profile, onSession, onFailure, onProgress);
       return "BROWSER_OPENED_SIGN_IN_DIRECTLY";
-    } catch {
+    } catch (error) {
+      authenticationLog("BROWSER_LAUNCH_FAILED", {
+        code: safeErrorCode(error),
+      });
       this.active = false;
       if (profile)
         await fs
@@ -266,36 +336,87 @@ export class BrowserCapture {
   ): Promise<void> {
     let socket: WebSocket | undefined;
     let childFailed = false;
-    child.once("error", () => {
+    let endReason = "SESSION_VERIFIED";
+    child.once("error", (error) => {
       childFailed = true;
+      authenticationLog("BROWSER_PROCESS_ERROR", {
+        code: (error as NodeJS.ErrnoException).code ?? "UNKNOWN",
+      });
+    });
+    child.once("exit", (code, signal) => {
+      authenticationLog("BROWSER_PROCESS_EXITED", {
+        exit_code: code,
+        signal: signal ?? null,
+      });
     });
     const cleanup = async () => {
       this.active = false;
+      const browserStillRunning = !child.killed;
       socket?.terminate();
       if (!child.killed) child.kill();
+      if (process.platform === "win32" && child.pid !== undefined) {
+        // Chromium runs helper processes that keep the profile files locked.
+        await new Promise<void>((resolve) => {
+          const killer = spawn(
+            "taskkill",
+            ["/PID", String(child.pid), "/T", "/F"],
+            { stdio: "ignore", windowsHide: true },
+          );
+          killer.once("error", () => resolve());
+          killer.once("exit", () => resolve());
+        });
+      }
+      let profileRemoved = true;
+      // The profile holds Monarch cookies, so removal is retried while the
+      // browser releases its file locks.
       await fs
-        .rm(profile, { recursive: true, force: true })
-        .catch(() => undefined);
+        .rm(profile, {
+          recursive: true,
+          force: true,
+          maxRetries: 10,
+          retryDelay: 300,
+        })
+        .catch(() => {
+          profileRemoved = false;
+        });
+      authenticationLog("AUTH_CAPTURE_CLEANUP", {
+        reason: endReason,
+        browser_still_running: browserStillRunning,
+        temporary_profile_removed: profileRemoved,
+      });
     };
     try {
       const deadline = Date.now() + this.ttlMs;
       let target: DevToolsTarget | undefined;
+      const waitStarted = Date.now();
+      let targetPollErrors = 0;
       while (Date.now() < deadline && !target) {
         if (childFailed) throw new Error("BROWSER_CAPTURE_FAILED");
         try {
           target = selectMonarchPageTarget(await this.getTargets(port));
         } catch {
           // The DevTools endpoint commonly rejects requests while starting.
+          targetPollErrors++;
         }
         if (!target) await new Promise((resolve) => setTimeout(resolve, 250));
       }
-      if (!target?.webSocketDebuggerUrl)
+      if (!target?.webSocketDebuggerUrl) {
+        authenticationLog("DEVTOOLS_TARGET_NOT_FOUND", {
+          waited_ms: Date.now() - waitStarted,
+          poll_errors: targetPollErrors,
+        });
         throw new Error("BROWSER_CAPTURE_TIMEOUT");
+      }
+      authenticationLog("DEVTOOLS_TARGET_FOUND", {
+        waited_ms: Date.now() - waitStarted,
+        poll_errors: targetPollErrors,
+      });
       socket = new WebSocket(target.webSocketDebuggerUrl);
       await new Promise<void>((resolve, reject) => {
         socket?.once("open", resolve);
         socket?.once("error", reject);
       });
+      authenticationLog("DEVTOOLS_SOCKET_OPEN");
       socket.send(JSON.stringify({ id: 1, method: "Network.enable" }));
       onProgress?.("BROWSER_TARGET_ATTACHED");
       authenticationLog("BROWSER_TARGET_ATTACHED");
@@ -308,19 +429,40 @@ export class BrowserCapture {
         const successfulLoginResponses = new Set<string>();
         const loginBodyRequests = new Map<number, string>();
         const lastSessionAttempts = new Map<string, number>();
+        const loggedCookieSignatures = new Set<string>();
+        const logCounts = new Map<string, number>();
+        /** Bound repetitive per-request events so one capture stays readable. */
+        const logLimited = (
+          event: string,
+          fields: Record<string, string | number | boolean | null>,
+          limit = 20,
+        ) => {
+          const count = (logCounts.get(event) ?? 0) + 1;
+          logCounts.set(event, count);
+          if (count <= limit) authenticationLog(event, fields);
+        };
+        let cookieReadCount = 0;
+        let lastCookieNames = "";
         let nextCommandId = 2;
         let captured = false;
         let lastVerificationFailure: string | undefined;
         const timer = setTimeout(
           () => {
+            authenticationLog("AUTH_CAPTURE_TIMEOUT", {
+              ttl_ms: this.ttlMs,
+              last_verification_failure: lastVerificationFailure ?? null,
+            });
             reject(
               new Error(lastVerificationFailure ?? "BROWSER_CAPTURE_TIMEOUT"),
             );
           },
           Math.max(1, deadline - Date.now()),
         );
+        let verifying = false;
         const verifySession = async (session: MonarchSession) => {
-          if (captured) return;
+          // Verification saves, reads and may clear the stored session, so it
+          // must never overlap. A dropped candidate is retried by later traffic.
+          if (captured || verifying) return;
           const sessionFingerprint = crypto
             .createHash("sha256")
             .update(
@@ -340,6 +482,7 @@ export class BrowserCapture {
           if (lastAttempt !== undefined && Date.now() - lastAttempt < 5_000)
             return;
           lastSessionAttempts.set(sessionFingerprint, Date.now());
+          verifying = true;
           onProgress?.("SESSION_CANDIDATE_SEEN");
           authenticationLog("SESSION_CANDIDATE_SEEN", {
             authorization_present: !!session.authorization,
@@ -366,6 +509,8 @@ export class BrowserCapture {
             authenticationLog("AUTH_VERIFICATION_RETRYING", {
               code: lastVerificationFailure,
             });
+          } finally {
+            verifying = false;
           }
         };
         const completeIfVerified = async (requestId: string) => {
@@ -394,6 +539,9 @@ export class BrowserCapture {
           );
         };
         socket?.once("close", () => {
+          authenticationLog("DEVTOOLS_SOCKET_CLOSED", {
+            last_verification_failure: lastVerificationFailure ?? null,
+          });
           reject(
             new Error(lastVerificationFailure ?? "BROWSER_CAPTURE_CLOSED"),
           );
@@ -418,17 +566,33 @@ export class BrowserCapture {
                 ...(deviceUuid ? { "device-uuid": deviceUuid } : {}),
               });
               onProgress?.("MONARCH_COOKIES_READ");
-              authenticationLog("MONARCH_COOKIES_READ", {
-                cookie_names: (event.result?.cookies ?? [])
-                  .map((item) => item.name)
-                  .filter((name): name is string => !!name)
-                  .sort()
-                  .join(","),
-              });
+              const observedCookies = event.result?.cookies ?? [];
+              const cookieNames = observedCookies
+                .map((item) => item.name)
+                .filter((name): name is string => !!name)
+                .sort()
+                .join(",");
+              cookieReadCount++;
+              if (cookieReadCount <= 2 || cookieNames !== lastCookieNames) {
+                lastCookieNames = cookieNames;
+                authenticationLog("MONARCH_COOKIES_READ", {
+                  cookie_names: cookieNames,
+                  cookie_count: observedCookies.length,
+                  read_number: cookieReadCount,
+                });
+              }
+              for (const metadata of cookieMetadata(observedCookies)) {
+                const signature = JSON.stringify(metadata);
+                if (loggedCookieSignatures.has(signature)) continue;
+                loggedCookieSignatures.add(signature);
+                authenticationLog("MONARCH_COOKIE_OBSERVED", metadata);
+              }
               await completeIfVerified(cookieRequestId);
             } else {
               onProgress?.("MONARCH_COOKIES_EMPTY");
-              authenticationLog("MONARCH_COOKIES_EMPTY");
+              authenticationLog("MONARCH_COOKIES_EMPTY", {
+                cookie_count: (event.result?.cookies ?? []).length,
+              });
             }
           }
           const loginRequestId =
@@ -464,6 +628,11 @@ export class BrowserCapture {
                 ...requestHeaders.get(requestId),
                 ...params.request.headers,
               });
+            if (isMonarchGraphqlUrl(url) || isMonarchLoginUrl(url))
+              logLimited("MONARCH_REQUEST_SEEN", {
+                ...safeUrlParts(url),
+                header_names: headerNamesOf(params?.request?.headers),
+              });
             await completeIfVerified(requestId);
           }
           if (
@@ -478,8 +647,28 @@ export class BrowserCapture {
           if (
             event.method === "Network.requestWillBeSentExtraInfo" &&
             requestId
-          )
+          ) {
+            const knownUrl = requestUrls.get(requestId);
+            if (isMonarchGraphqlUrl(knownUrl) || isMonarchLoginUrl(knownUrl))
+              logLimited("MONARCH_REQUEST_EXTRA_INFO_SEEN", {
+                ...safeUrlParts(knownUrl),
+                header_names: headerNamesOf(params?.headers),
+              });
             await completeIfVerified(requestId);
+          }
+          if (
+            event.method === "Network.responseReceived" &&
+            requestId &&
+            safeUrlParts(params?.response?.url).host === "api.monarch.com"
+          )
+            logLimited(
+              "MONARCH_API_RESPONSE",
+              {
+                ...safeUrlParts(params?.response?.url),
+                http_status: params?.response?.status ?? null,
+              },
+              40,
+            );
           if (
             event.method === "Network.responseReceived" &&
             requestId &&
@@ -489,7 +678,10 @@ export class BrowserCapture {
             requestUrls.set(requestId, params.response.url as string);
             successfulResponses.add(requestId);
             onProgress?.("MONARCH_GRAPHQL_SEEN");
-            authenticationLog("MONARCH_GRAPHQL_SEEN", { http_status: 200 });
+            logLimited("MONARCH_GRAPHQL_SEEN", {
+              ...safeUrlParts(params.response.url),
+              http_status: params.response.status ?? null,
+            });
             await completeIfVerified(requestId);
             requestApplicableCookies(requestId);
           }
@@ -501,6 +693,7 @@ export class BrowserCapture {
           ) {
             successfulLoginResponses.add(requestId);
             authenticationLog("MONARCH_LOGIN_RESPONSE_SEEN", {
+              ...safeUrlParts(params?.response?.url),
               http_status: 200,
             });
           }
@@ -526,6 +719,7 @@ export class BrowserCapture {
         error instanceof Error && /^[A-Z0-9_]+$/.test(error.message)
           ? error.message
           : "BROWSER_CAPTURE_FAILED";
+      endReason = code;
       diagnostic(code);
       authenticationLog("AUTH_CAPTURE_FAILED", { code });
       onFailure?.(code);

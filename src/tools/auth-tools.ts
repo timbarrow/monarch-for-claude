@@ -4,7 +4,11 @@ import type { ConnectionStatus, MonarchSession } from "../auth/types.js";
 import type { MonarchClient } from "../monarch/client.js";
 import { MonarchError } from "../monarch/errors.js";
 import { SERVER_VERSION } from "../config.js";
-import { authenticationLog, authenticationTrace } from "../logging.js";
+import {
+  authenticationLog,
+  authenticationTrace,
+  safeErrorCode,
+} from "../logging.js";
 
 export class AuthService {
   private lastVerifiedAt: string | null = null;
@@ -36,7 +40,8 @@ export class AuthService {
         diagnostic_code: "SESSION_STORED",
         diagnostic_trace: authenticationTrace(),
       };
-    } catch {
+    } catch (error) {
+      authenticationLog("SESSION_UNREADABLE", { code: safeErrorCode(error) });
       return {
         server_version: SERVER_VERSION,
         connected: false,
@@ -78,12 +83,22 @@ export class AuthService {
       csrf_present: !!session.csrfToken,
       device_uuid_present: !!session.deviceUuid,
     });
-    await this.store.save(session);
+    try {
+      await this.store.save(session);
+      authenticationLog("SESSION_SAVED");
+    } catch (error) {
+      const code = safeErrorCode(error);
+      authenticationLog("SESSION_SAVE_FAILED", { code });
+      throw new Error(code);
+    }
     try {
       await this.client.read("GetAccounts");
       this.lastVerifiedAt = new Date().toISOString();
       this.lastDiagnostic = null;
-      authenticationLog("AUTH_VERIFICATION_SUCCEEDED");
+      authenticationLog("AUTH_VERIFICATION_SUCCEEDED", {
+        operation: "GetAccounts",
+        http_status: 200,
+      });
     } catch (error) {
       await this.store.clear();
       if (error instanceof MonarchError) {
