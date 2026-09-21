@@ -15,6 +15,7 @@ import {
 import type { ReadService } from "../../src/tools/read-tools.js";
 import type { MonarchClient } from "../../src/monarch/client.js";
 import type { Confirmation } from "../../src/rules/confirmation.js";
+import { failure } from "../../src/tools/shared.js";
 
 const safeRule = {
   criteria: { merchant: { operator: "contains" as const, value: "Coffee" } },
@@ -66,6 +67,61 @@ describe("safe rule boundary", () => {
         apply_to_existing_transactions: true,
       }),
     ).toThrow();
+  });
+  it("normalizes documented and compatibility historical flags", () => {
+    for (const candidate of [
+      {
+        kind: "create",
+        rule: { ...safeRule, apply_to_existing_transactions: true },
+      },
+      {
+        kind: "create",
+        rule: { ...safeRule, apply_to_historical: true },
+      },
+      {
+        kind: "create",
+        rule: { ...safeRule, applyToExistingTransactions: true },
+      },
+      {
+        kind: "create",
+        rule: safeRule,
+        apply_to_historical: true,
+      },
+      {
+        kind: "create",
+        rule: safeRule,
+        applyToExistingTransactions: true,
+      },
+    ])
+      expect(previewChangeSchema.parse(candidate)).toMatchObject({
+        apply_to_existing_transactions: true,
+        rule: safeRule,
+      });
+    expect(() =>
+      previewChangeSchema.parse({
+        kind: "create",
+        rule: { ...safeRule, apply_to_historical: false },
+        apply_to_existing_transactions: true,
+      }),
+    ).toThrow("HISTORICAL_APPLICATION_FLAG_CONFLICT");
+  });
+  it("returns actionable validation details instead of an opaque error", () => {
+    try {
+      previewChangeSchema.parse({
+        kind: "create",
+        rule: { criteria: {}, actions: {} },
+      });
+      throw new Error("EXPECTED_VALIDATION_FAILURE");
+    } catch (error) {
+      expect(failure(error)).toMatchObject({
+        isError: true,
+        content: [
+          {
+            text: expect.stringContaining('"error":"INVALID_INPUT"'),
+          },
+        ],
+      });
+    }
   });
   it("computes historical matches as inert read-only data", () => {
     const transaction = normalizeTransaction({

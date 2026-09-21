@@ -97,9 +97,27 @@ export const previewRuleInput = z
   .object({
     kind: z.enum(["create", "update", "delete", "reorder"]),
     target_rule_id: idSchema.optional(),
-    rule: z.unknown().optional(),
+    rule: z
+      .unknown()
+      .optional()
+      .describe(
+        "Complete rule definition. Historical application may be placed here as apply_to_existing_transactions for compatibility, but it is not a persistent rule property.",
+      ),
     new_position: z.number().int().min(0).max(10_000).optional(),
-    apply_to_existing_transactions: z.boolean().optional(),
+    apply_to_existing_transactions: z
+      .boolean()
+      .optional()
+      .describe(
+        "For create/update only: set true to apply the reviewed rule to matching existing transactions. This is a TOP-LEVEL preview argument, alongside kind and rule.",
+      ),
+    apply_to_historical: z
+      .boolean()
+      .optional()
+      .describe("Compatibility alias for apply_to_existing_transactions."),
+    applyToExistingTransactions: z
+      .boolean()
+      .optional()
+      .describe("Compatibility alias for apply_to_existing_transactions."),
   })
   .passthrough();
 export const applyRuleInput = z

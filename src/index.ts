@@ -197,7 +197,7 @@ export function createServer(deps?: {
     "preview_classification_rule_change",
     {
       description:
-        "Preview creating, updating, deleting, or reordering a Monarch classification rule. Create/update may explicitly apply the reviewed rule to all matching existing transactions.",
+        'Preview creating, updating, deleting, or reordering a Monarch classification rule. For historical application use the TOP-LEVEL argument: {"kind":"create","rule":{...},"apply_to_existing_transactions":true}. Compatibility aliases are accepted.',
       inputSchema: previewRuleInput,
       annotations: { readOnlyHint: true },
     },

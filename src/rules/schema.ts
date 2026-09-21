@@ -80,7 +80,7 @@ const historicalApplication = {
   apply_to_existing_transactions: z.boolean().default(false),
 };
 
-export const previewChangeSchema = z.discriminatedUnion("kind", [
+const canonicalPreviewChangeSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("create"),
@@ -105,8 +105,52 @@ export const previewChangeSchema = z.discriminatedUnion("kind", [
     })
     .strict(),
 ]);
-export type PreviewChange = z.infer<typeof previewChangeSchema>;
-export type PreviewChangeInput = z.input<typeof previewChangeSchema>;
+export type PreviewChange = z.infer<typeof canonicalPreviewChangeSchema>;
+export type PreviewChangeInput = z.input<typeof canonicalPreviewChangeSchema>;
+
+/**
+ * Accept the documented top-level flag plus the spellings earlier Claude
+ * clients plausibly placed inside `rule`. All forms are normalized to the one
+ * canonical field before the strict security schema runs.
+ */
+function normalizeHistoricalApplicationFlag(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const value = { ...(input as Record<string, unknown>) };
+  if (value.kind !== "create" && value.kind !== "update") return value;
+  const rule =
+    value.rule && typeof value.rule === "object" && !Array.isArray(value.rule)
+      ? { ...(value.rule as Record<string, unknown>) }
+      : value.rule;
+  const candidates: unknown[] = [
+    value.apply_to_existing_transactions,
+    value.apply_to_historical,
+    value.applyToExistingTransactions,
+  ];
+  if (rule && typeof rule === "object") {
+    const ruleFields = rule as Record<string, unknown>;
+    candidates.push(
+      ruleFields.apply_to_existing_transactions,
+      ruleFields.apply_to_historical,
+      ruleFields.applyToExistingTransactions,
+    );
+    delete ruleFields.apply_to_existing_transactions;
+    delete ruleFields.apply_to_historical;
+    delete ruleFields.applyToExistingTransactions;
+    value.rule = ruleFields;
+  }
+  delete value.apply_to_historical;
+  delete value.applyToExistingTransactions;
+  const supplied = candidates.filter((candidate) => candidate !== undefined);
+  if (supplied.length > 1 && supplied.some((item) => item !== supplied[0]))
+    throw new Error("HISTORICAL_APPLICATION_FLAG_CONFLICT");
+  if (supplied.length) value.apply_to_existing_transactions = supplied[0];
+  return value;
+}
+
+export const previewChangeSchema = z.preprocess(
+  normalizeHistoricalApplicationFlag,
+  canonicalPreviewChangeSchema,
+);
 
 export function toGraphqlSafeRule(
   rule: SafeRule,

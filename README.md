@@ -4,6 +4,8 @@ This is a local, single-user Windows connector for Claude Desktop. It exposes th
 
 Rule management supports create, update, delete, and reorder; merchant/original-statement, account, category, and amount criteria; category, tag, merchant-name, report-visibility, and review-status actions; and an explicit `apply_to_existing_transactions` option for create/update previews. Historical application is never implicit: the preview scans the full available transaction history, reports the matching count and examples, and the apply step still requires local confirmation.
 
+For historical application, the canonical preview shape is `{"kind":"create","rule":{...},"apply_to_existing_transactions":true}`. The flag belongs at the top level alongside `kind` and `rule`. For compatibility, `apply_to_historical` and `applyToExistingTransactions` are also accepted either there or inside `rule`; the server normalizes them before validation. Invalid rule requests return `INVALID_INPUT` with safe field paths and validation messages instead of an opaque error.
+
 ## Install
 
 Download the `.mcpb` file from the [latest GitHub release](https://github.com/timbarrow/monarch-for-claude/releases/latest), verify it against the accompanying `.sha256` file, and install it using Claude Desktop's Extensions UI.
