@@ -197,7 +197,7 @@ export function createServer(deps?: {
     "preview_classification_rule_change",
     {
       description:
-        "Preview a safe classification-rule change without changing Monarch.",
+        "Preview creating, updating, deleting, or reordering a Monarch classification rule. Create/update may explicitly apply the reviewed rule to all matching existing transactions.",
       inputSchema: previewRuleInput,
       annotations: { readOnlyHint: true },
     },
@@ -213,7 +213,7 @@ export function createServer(deps?: {
     "apply_classification_rule_change",
     {
       description:
-        "Apply a single-use, user-confirmed classification-rule preview.",
+        "Apply a single-use, user-confirmed rule preview, including reviewed historical matches when requested.",
       inputSchema: applyRuleInput,
       annotations: { readOnlyHint: false, destructiveHint: true },
     },

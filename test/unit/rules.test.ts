@@ -21,14 +21,21 @@ const safeRule = {
   actions: { set_category_id: "cat_food" },
 };
 describe("safe rule boundary", () => {
-  it("accepts only explicit category/tag actions", () => {
+  it("accepts the supported rule-only actions", () => {
     expect(safeRuleSchema.parse(safeRule)).toEqual(safeRule);
     expect(() =>
       safeRuleSchema.parse({ ...safeRule, applyToExistingTransactions: true }),
     ).toThrow();
-    expect(() =>
-      safeRuleSchema.parse({ ...safeRule, actions: { hide: true } }),
-    ).toThrow();
+    expect(
+      safeRuleSchema.parse({
+        ...safeRule,
+        actions: {
+          set_merchant_name: "Amazon",
+          hide_from_reports: true,
+          review_status: "reviewed",
+        },
+      }),
+    ).toMatchObject({ actions: { set_merchant_name: "Amazon" } });
     expect(() =>
       safeRuleSchema.parse({
         ...safeRule,
@@ -44,11 +51,18 @@ describe("safe rule boundary", () => {
         query: "mutation DeleteTransaction",
       }),
     ).toThrow();
-    expect(() =>
+    expect(
       previewChangeSchema.parse({
         kind: "update",
         target_rule_id: "rule_1",
         rule: safeRule,
+        apply_to_existing_transactions: true,
+      }),
+    ).toMatchObject({ apply_to_existing_transactions: true });
+    expect(() =>
+      previewChangeSchema.parse({
+        kind: "delete",
+        target_rule_id: "rule_1",
         apply_to_existing_transactions: true,
       }),
     ).toThrow();
@@ -74,6 +88,25 @@ describe("safe rule boundary", () => {
       count: 1,
       representatives: [{ id: "txn_1" }],
     });
+  });
+  it("matches any merchant value within one criterion", () => {
+    const transaction = normalizeTransaction({
+      id: "txn_1",
+      date: "2026-09-01",
+      amount: -25,
+      merchantName: "Amazon Marketplace",
+    });
+    expect(
+      transactionMatchesRule(transaction, {
+        criteria: {
+          merchant: [
+            { operator: "contains", value: "Target" },
+            { operator: "contains", value: "Amazon" },
+          ],
+        },
+        actions: { set_category_id: "cat_shopping" },
+      }),
+    ).toBe(true);
   });
   it("pages through the full preview window before reporting match count", async () => {
     const matchingTransaction = normalizeTransaction({
@@ -122,6 +155,105 @@ describe("safe rule boundary", () => {
       start_date: "2026-08-21",
       end_date: "2026-09-20",
     });
+  });
+  it("previews all available history before enabling retroactive application", async () => {
+    const transaction = normalizeTransaction({
+      id: "txn_1",
+      date: "2020-01-01",
+      amount: -12.5,
+      merchantName: "Synthetic Coffee",
+    });
+    const search = vi.fn().mockResolvedValue({
+      transactions: [transaction],
+      next_cursor: null,
+      applied_date_range: {
+        start_date: "1900-01-01",
+        end_date: "2026-09-21",
+      },
+    });
+    const read = {
+      rawRules: async () => [],
+      search,
+      accounts: async () => [],
+      categories: async () => [{ id: "cat_food" }],
+      tags: async () => [],
+    } as unknown as ReadService;
+    const service = new RuleService(
+      read,
+      {} as MonarchClient,
+      new PreviewStore(),
+      {} as Confirmation,
+    );
+    await expect(
+      service.preview({
+        kind: "create",
+        rule: safeRule,
+        apply_to_existing_transactions: true,
+      }),
+    ).resolves.toMatchObject({
+      historical_match_count: 1,
+      historical_transactions_to_modify: 1,
+    });
+    expect(search).toHaveBeenCalledWith(
+      expect.objectContaining({ start_date: "1900-01-01" }),
+    );
+  });
+  it("sends historical application only after preview and confirmation", async () => {
+    const mutate = vi.fn().mockResolvedValue({
+      createTransactionRuleV2: { errors: null },
+    });
+    const read = {
+      rawRules: async () => [],
+      search: async () => ({
+        transactions: [],
+        next_cursor: null,
+        applied_date_range: {
+          start_date: "1900-01-01",
+          end_date: "2026-09-21",
+        },
+      }),
+      accounts: async () => [],
+      categories: async () => [{ id: "cat_food" }],
+      tags: async () => [],
+      rules: async () => [
+        {
+          id: "rule_created",
+          order: 0,
+          criteria: safeRule.criteria,
+          actions: safeRule.actions,
+          last_applied_at: null,
+          editable: true,
+          unsupported_actions: [],
+        },
+      ],
+    } as unknown as ReadService;
+    const confirmation = {
+      confirm: vi.fn().mockResolvedValue(true),
+    } as unknown as Confirmation;
+    const service = new RuleService(
+      read,
+      { mutate } as unknown as MonarchClient,
+      new PreviewStore(),
+      confirmation,
+    );
+    const preview = await service.preview({
+      kind: "create",
+      rule: safeRule,
+      apply_to_existing_transactions: true,
+    });
+    await expect(service.apply(preview.preview_id)).resolves.toMatchObject({
+      applied: true,
+      historical_application_requested: true,
+    });
+    expect(confirmation.confirm).toHaveBeenCalledOnce();
+    expect(mutate).toHaveBeenCalledWith(
+      "Common_CreateTransactionRuleMutationV2",
+      expect.objectContaining({
+        input: expect.objectContaining({
+          applyToExistingTransactions: true,
+        }),
+      }),
+    );
   });
   it("expires and consumes previews", () => {
     let now = 0;

@@ -117,17 +117,29 @@ export function normalizeRule(
     : [];
   const amount = record(r.amountCriteria);
   const range = record(amount.valueRange);
-  const mapCriterion = (items: unknown[]) => {
-    const first = record(items[0]);
-    return items.length === 1 && first.value
-      ? {
-          operator: first.operator === "eq" ? "equals" : "contains",
-          value: text(first.value) ?? "",
-        }
-      : undefined;
+  const mapCriteria = (items: unknown[]) => {
+    const mapped = items
+      .map((item) => {
+        const criterion = record(item);
+        return criterion.value
+          ? {
+              operator:
+                criterion.operator === "eq"
+                  ? ("equals" as const)
+                  : ("contains" as const),
+              value: text(criterion.value) ?? "",
+            }
+          : undefined;
+      })
+      .filter((item): item is NonNullable<typeof item> => !!item);
+    return mapped.length === 0
+      ? undefined
+      : mapped.length === 1
+        ? mapped[0]
+        : mapped;
   };
-  const merchant = mapCriterion(merchantCriteria);
-  const statement = mapCriterion(statementCriteria);
+  const merchant = mapCriteria(merchantCriteria);
+  const statement = mapCriteria(statementCriteria);
   const mappedAmountOperator = (
     {
       eq: "equals",
@@ -158,6 +170,7 @@ export function normalizeRule(
       : {}),
   };
   const category = record(r.setCategoryAction);
+  const merchantAction = record(r.setMerchantAction);
   const tags = Array.isArray(r.addTagsAction)
     ? r.addTagsAction
         .map((tag) => text(record(tag).id))
@@ -166,11 +179,15 @@ export function normalizeRule(
   const actions = {
     ...(text(category.id) ? { set_category_id: text(category.id) } : {}),
     ...(tags.length ? { add_tag_ids: tags } : {}),
+    ...(text(merchantAction.name)
+      ? { set_merchant_name: text(merchantAction.name) }
+      : {}),
+    ...(r.setHideFromReportsAction === true ? { hide_from_reports: true } : {}),
+    ...(text(r.reviewStatusAction)
+      ? { review_status: text(r.reviewStatusAction) }
+      : {}),
     // Preserve unsupported action markers so normalizeExistingRule marks this
     // rule non-editable instead of silently dropping a broader existing action.
-    ...(r.setMerchantAction !== null && r.setMerchantAction !== undefined
-      ? { set_merchant_action: true }
-      : {}),
     ...(r.linkGoalAction !== null && r.linkGoalAction !== undefined
       ? { link_goal_action: true }
       : {}),

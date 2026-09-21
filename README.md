@@ -1,6 +1,8 @@
 # Monarch for Claude
 
-This is a local, single-user Windows connector for Claude Desktop. It exposes the exact tool inventory described in `src/tools/contracts.ts`: read-only account/transaction/category/tag/rule tools plus an audited, preview-and-confirm path for safe classification rules.
+This is a local, single-user Windows connector for Claude Desktop. It exposes the exact tool inventory described in `src/tools/contracts.ts`: read-only account/transaction/category/tag/rule tools plus an audited, preview-and-confirm path for classification rules.
+
+Rule management supports create, update, delete, and reorder; merchant/original-statement, account, category, and amount criteria; category, tag, merchant-name, report-visibility, and review-status actions; and an explicit `apply_to_existing_transactions` option for create/update previews. Historical application is never implicit: the preview scans the full available transaction history, reports the matching count and examples, and the apply step still requires local confirmation.
 
 ## Install
 

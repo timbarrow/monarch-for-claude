@@ -11,23 +11,24 @@ function includes(
     ? haystack === needle
     : haystack.toLowerCase().includes(needle.toLowerCase());
 }
+function matchesAny(
+  haystack: string | null,
+  criteria:
+    | { operator: "equals" | "contains"; value: string }
+    | { operator: "equals" | "contains"; value: string }[],
+): boolean {
+  const values = Array.isArray(criteria) ? criteria : [criteria];
+  return values.some((item) => includes(haystack, item.value, item.operator));
+}
 export function transactionMatchesRule(
   transaction: Transaction,
   rule: SafeRule,
 ): boolean {
   const c = rule.criteria;
-  if (
-    c.merchant &&
-    !includes(transaction.merchant, c.merchant.value, c.merchant.operator)
-  )
-    return false;
+  if (c.merchant && !matchesAny(transaction.merchant, c.merchant)) return false;
   if (
     c.original_statement &&
-    !includes(
-      transaction.original_statement,
-      c.original_statement.value,
-      c.original_statement.operator,
-    )
+    !matchesAny(transaction.original_statement, c.original_statement)
   )
     return false;
   if (

@@ -99,6 +99,7 @@ export const previewRuleInput = z
     target_rule_id: idSchema.optional(),
     rule: z.unknown().optional(),
     new_position: z.number().int().min(0).max(10_000).optional(),
+    apply_to_existing_transactions: z.boolean().optional(),
   })
   .passthrough();
 export const applyRuleInput = z

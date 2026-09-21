@@ -11,6 +11,7 @@ const match = z
     value: z.string().trim().min(1).max(200),
   })
   .strict();
+const matchSet = z.union([match, z.array(match).min(1).max(20)]);
 const amount = z
   .object({
     operator: z.enum(["equals", "greater_than", "less_than", "between"]),
@@ -42,8 +43,8 @@ export const safeRuleSchema = z
   .object({
     criteria: z
       .object({
-        merchant: match.optional(),
-        original_statement: match.optional(),
+        merchant: matchSet.optional(),
+        original_statement: matchSet.optional(),
         account_ids: ids.optional(),
         category_ids: ids.optional(),
         amount: amount.optional(),
@@ -57,25 +58,42 @@ export const safeRuleSchema = z
       .object({
         set_category_id: idSchema.optional(),
         add_tag_ids: ids.optional(),
+        set_merchant_name: z.string().trim().min(1).max(200).optional(),
+        hide_from_reports: z.boolean().optional(),
+        review_status: z.enum(["needs_review", "reviewed"]).optional(),
       })
       .strict()
       .refine(
         (value) =>
           value.set_category_id !== undefined ||
-          value.add_tag_ids !== undefined,
-        "at least one safe action is required",
+          value.add_tag_ids !== undefined ||
+          value.set_merchant_name !== undefined ||
+          value.hide_from_reports !== undefined ||
+          value.review_status !== undefined,
+        "at least one rule action is required",
       ),
   })
   .strict();
 export type SafeRule = z.infer<typeof safeRuleSchema>;
 
+const historicalApplication = {
+  apply_to_existing_transactions: z.boolean().default(false),
+};
+
 export const previewChangeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("create"), rule: safeRuleSchema }).strict(),
+  z
+    .object({
+      kind: z.literal("create"),
+      rule: safeRuleSchema,
+      ...historicalApplication,
+    })
+    .strict(),
   z
     .object({
       kind: z.literal("update"),
       target_rule_id: idSchema,
       rule: safeRuleSchema,
+      ...historicalApplication,
     })
     .strict(),
   z.object({ kind: z.literal("delete"), target_rule_id: idSchema }).strict(),
@@ -88,10 +106,12 @@ export const previewChangeSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 export type PreviewChange = z.infer<typeof previewChangeSchema>;
+export type PreviewChangeInput = z.input<typeof previewChangeSchema>;
 
 export function toGraphqlSafeRule(
   rule: SafeRule,
   id?: string,
+  applyToExistingTransactions = false,
 ): Record<string, unknown> {
   const criterion = (value: {
     operator: "equals" | "contains";
@@ -121,15 +141,17 @@ export function toGraphqlSafeRule(
           : { value: rule.criteria.amount.value }),
       }
     : undefined;
+  const criteria = (value: SafeRule["criteria"]["merchant"]) =>
+    (Array.isArray(value) ? value : value ? [value] : []).map(criterion);
   return {
     ...(id ? { id } : {}),
     ...(rule.criteria.merchant
-      ? { merchantNameCriteria: [criterion(rule.criteria.merchant)] }
+      ? { merchantNameCriteria: criteria(rule.criteria.merchant) }
       : {}),
     ...(rule.criteria.original_statement
       ? {
           originalStatementCriteria: [
-            criterion(rule.criteria.original_statement),
+            ...criteria(rule.criteria.original_statement),
           ],
         }
       : {}),
@@ -146,6 +168,15 @@ export function toGraphqlSafeRule(
     ...(rule.actions.add_tag_ids
       ? { addTagsAction: rule.actions.add_tag_ids }
       : {}),
-    applyToExistingTransactions: false,
+    ...(rule.actions.set_merchant_name
+      ? { setMerchantAction: rule.actions.set_merchant_name }
+      : {}),
+    ...(rule.actions.hide_from_reports !== undefined
+      ? { setHideFromReportsAction: rule.actions.hide_from_reports }
+      : {}),
+    ...(rule.actions.review_status
+      ? { reviewStatusAction: rule.actions.review_status }
+      : {}),
+    applyToExistingTransactions,
   };
 }

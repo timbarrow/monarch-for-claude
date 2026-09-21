@@ -1,11 +1,16 @@
 import crypto from "node:crypto";
 import { PREVIEW_TTL_MS } from "../config.js";
-import type { PreviewChange } from "./schema.js";
+import {
+  previewChangeSchema,
+  type PreviewChange,
+  type PreviewChangeInput,
+} from "./schema.js";
 
 export interface StoredPreview {
   preview_id: string;
   change: PreviewChange;
   state_fingerprint: string;
+  historical_match_count: number;
   created_at: number;
   used: boolean;
 }
@@ -15,12 +20,17 @@ export class PreviewStore {
     private readonly now: () => number = Date.now,
     private readonly ttlMs = PREVIEW_TTL_MS,
   ) {}
-  create(change: PreviewChange, stateFingerprint: string): StoredPreview {
+  create(
+    change: PreviewChangeInput,
+    stateFingerprint: string,
+    historicalMatchCount = 0,
+  ): StoredPreview {
     this.sweep();
     const preview: StoredPreview = {
       preview_id: crypto.randomUUID(),
-      change,
+      change: previewChangeSchema.parse(change),
       state_fingerprint: stateFingerprint,
+      historical_match_count: historicalMatchCount,
       created_at: this.now(),
       used: false,
     };

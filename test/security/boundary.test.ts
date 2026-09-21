@@ -23,13 +23,23 @@ describe("security boundary", () => {
       }),
     ).toThrow();
   });
-  it("forces historical application off at the network boundary", () => {
+  it("defaults historical application off and permits only an explicit boolean", () => {
     expect(
       toGraphqlSafeRule({
         criteria: { merchant: { operator: "equals", value: "Synthetic" } },
         actions: { add_tag_ids: ["tag_1"] },
       }),
     ).toMatchObject({ applyToExistingTransactions: false });
+    expect(
+      toGraphqlSafeRule(
+        {
+          criteria: { merchant: { operator: "equals", value: "Synthetic" } },
+          actions: { set_category_id: "cat_1" },
+        },
+        undefined,
+        true,
+      ),
+    ).toMatchObject({ applyToExistingTransactions: true });
   });
   it("redacts common secret-bearing diagnostics", () => {
     const output = redact(

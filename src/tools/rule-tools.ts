@@ -30,6 +30,21 @@ function safeRuleFromExisting(rule: {
   if (!result.success) throw new Error("RULE_NOT_EDITABLE");
   return result.data;
 }
+function comparableRule(rule: SafeRule): unknown {
+  const criteria = { ...rule.criteria };
+  if (criteria.merchant && !Array.isArray(criteria.merchant))
+    criteria.merchant = [criteria.merchant];
+  if (
+    criteria.original_statement &&
+    !Array.isArray(criteria.original_statement)
+  )
+    criteria.original_statement = [criteria.original_statement];
+  const actions = { ...rule.actions };
+  // Monarch's read shape does not distinguish an absent hide action from an
+  // explicit false value. Treat false as the canonical absence for read-back.
+  if (actions.hide_from_reports === false) delete actions.hide_from_reports;
+  return { criteria, actions };
+}
 export function assertPayloadSuccess(result: unknown, field: string): void {
   const payload =
     result && typeof result === "object"
@@ -82,7 +97,9 @@ export class RuleService {
     if (change.kind === "create" || change.kind === "update") {
       const transactions: Transaction[] = [];
       let cursor: string | undefined;
-      let startDate: string | undefined;
+      let startDate: string | undefined = change.apply_to_existing_transactions
+        ? "1900-01-01"
+        : undefined;
       let endDate: string | undefined;
       do {
         const page = await this.read.search({
@@ -100,10 +117,16 @@ export class RuleService {
       impact = {
         historical_match_count: computed.count,
         representative_matches: computed.representatives,
-        scope: `current default ${startDate} through ${endDate}; preview only`,
+        scope: change.apply_to_existing_transactions
+          ? `full available history ${startDate} through ${endDate}; selected for historical application`
+          : `current default ${startDate} through ${endDate}; preview only`,
       };
     }
-    const stored = this.previews.create(change, fingerprint(rules));
+    const stored = this.previews.create(
+      change,
+      fingerprint(rules),
+      impact.historical_match_count,
+    );
     return {
       preview_id: stored.preview_id,
       expires_in_seconds: 600,
@@ -112,9 +135,19 @@ export class RuleService {
       validation_warnings:
         change.kind === "reorder"
           ? ["Rule order affects execution order."]
-          : [],
+          : (change.kind === "create" || change.kind === "update") &&
+              change.apply_to_existing_transactions
+            ? [
+                "Applying this rule will immediately change every existing Monarch transaction that matches it.",
+              ]
+            : [],
       ...impact,
       historical_transactions_modified: 0,
+      historical_transactions_to_modify:
+        (change.kind === "create" || change.kind === "update") &&
+        change.apply_to_existing_transactions
+          ? impact.historical_match_count
+          : 0,
       ordering_impact:
         change.kind === "reorder"
           ? `Rule will move to zero-based position ${change.new_position}.`
@@ -146,7 +179,11 @@ export class RuleService {
         mutationResult = await this.client.mutate(
           "Common_CreateTransactionRuleMutationV2",
           {
-            input: toGraphqlSafeRule(change.rule),
+            input: toGraphqlSafeRule(
+              change.rule,
+              undefined,
+              change.apply_to_existing_transactions,
+            ),
           },
         );
         assertPayloadSuccess(mutationResult, "createTransactionRuleV2");
@@ -159,7 +196,11 @@ export class RuleService {
         mutationResult = await this.client.mutate(
           "Common_UpdateTransactionRuleMutationV2",
           {
-            input: toGraphqlSafeRule(change.rule, change.target_rule_id),
+            input: toGraphqlSafeRule(
+              change.rule,
+              change.target_rule_id,
+              change.apply_to_existing_transactions,
+            ),
           },
         );
         assertPayloadSuccess(mutationResult, "updateTransactionRuleV2");
@@ -199,8 +240,8 @@ export class RuleService {
         );
         if (
           !observed ||
-          JSON.stringify(safeRuleFromExisting(observed)) !==
-            JSON.stringify(change.rule)
+          JSON.stringify(comparableRule(safeRuleFromExisting(observed))) !==
+            JSON.stringify(comparableRule(change.rule))
         )
           throw new Error("READ_BACK_VERIFICATION_FAILED");
       }
@@ -209,8 +250,8 @@ export class RuleService {
         !finalRules.some((rule) => {
           try {
             return (
-              JSON.stringify(safeRuleFromExisting(rule)) ===
-              JSON.stringify(change.rule)
+              JSON.stringify(comparableRule(safeRuleFromExisting(rule))) ===
+              JSON.stringify(comparableRule(change.rule))
             );
           } catch {
             return false;
@@ -218,7 +259,14 @@ export class RuleService {
         })
       )
         throw new Error("READ_BACK_VERIFICATION_FAILED");
-      return { applied: true, final_rules: finalRules };
+      return {
+        applied: true,
+        historical_application_requested:
+          (change.kind === "create" || change.kind === "update") &&
+          change.apply_to_existing_transactions,
+        previewed_historical_match_count: preview.historical_match_count,
+        final_rules: finalRules,
+      };
     } finally {
       this.applying = false;
     }

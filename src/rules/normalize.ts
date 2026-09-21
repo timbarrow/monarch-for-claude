@@ -33,7 +33,13 @@ export function normalizeExistingRule(input: {
 function unsupportedActionLabels(actions: unknown): string[] {
   if (!actions || typeof actions !== "object" || Array.isArray(actions))
     return ["unrecognized_action_shape"];
-  const allowed = new Set(["set_category_id", "add_tag_ids"]);
+  const allowed = new Set([
+    "set_category_id",
+    "add_tag_ids",
+    "set_merchant_name",
+    "hide_from_reports",
+    "review_status",
+  ]);
   const keys = Object.keys(actions as Record<string, unknown>);
   const labels = keys.filter((key) => !allowed.has(key));
   return labels.length ? labels : ["criteria_or_action_not_supported"];
