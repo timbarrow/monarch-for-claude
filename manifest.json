@@ -2,8 +2,8 @@
   "manifest_version": "0.3",
   "name": "monarch-for-claude",
   "display_name": "Monarch for Claude",
-  "version": "0.1.11",
-  "description": "Local Monarch read access and previewed classification-rule management, including historical application.",
+  "version": "0.1.12",
+  "description": "Local Monarch read access with previewed rule and non-delete transaction updates.",
   "author": { "name": "Tim Barrow" },
   "license": "MIT",
   "server": {

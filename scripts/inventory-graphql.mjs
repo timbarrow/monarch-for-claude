@@ -6,6 +6,8 @@ const permitted = new Set([
   "Common_UpdateTransactionRuleMutationV2",
   "Common_DeleteTransactionRule",
   "Web_UpdateRuleOrderMutation",
+  "Web_TransactionDrawerUpdateTransaction",
+  "Web_SetTransactionTags",
 ]);
 const found = [...source.matchAll(/mutation\s+(\w+)/g)].map(
   (match) => match[1],
@@ -20,7 +22,6 @@ if (
     `GraphQL mutation inventory failed: ${unexpected.join(", ") || "missing or duplicate approved mutation"}`,
   );
 const forbiddenWords = [
-  "updateTransaction(",
   "createTransaction(",
   "deleteTransaction(",
   "refreshInstitution",

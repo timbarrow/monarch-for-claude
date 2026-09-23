@@ -5,11 +5,16 @@ import { SessionStore } from "./auth/session-store.js";
 import { SERVER_VERSION } from "./config.js";
 import { authenticationLog, authenticationLogFile } from "./logging.js";
 import { MonarchClient } from "./monarch/client.js";
-import { LoopbackConfirmation } from "./rules/confirmation.js";
+import {
+  LoopbackConfirmation,
+  type Confirmation,
+} from "./rules/confirmation.js";
 import { PreviewStore } from "./rules/preview-store.js";
+import { TransactionPreviewStore } from "./transactions/preview-store.js";
 import { AuthService } from "./tools/auth-tools.js";
 import {
   applyRuleInput,
+  applyTransactionUpdateInput,
   connectInput,
   connectionStatusInput,
   getTransactionInput,
@@ -18,32 +23,36 @@ import {
   listRulesInput,
   listTagsInput,
   previewRuleInput,
+  previewTransactionUpdateInput,
   searchTransactionsInput,
   summarizeTransactionsInput,
 } from "./tools/contracts.js";
 import { ReadService } from "./tools/read-tools.js";
 import { RuleService } from "./tools/rule-tools.js";
 import { failure, response } from "./tools/shared.js";
+import { TransactionService } from "./tools/transaction-tools.js";
 
 export function createServer(deps?: {
   store?: SessionStore;
   capture?: BrowserCapture;
-  confirmation?: LoopbackConfirmation;
+  confirmation?: Confirmation;
   client?: MonarchClient;
 }) {
   const store = deps?.store ?? new SessionStore();
   const client = deps?.client ?? new MonarchClient(store);
   const read = new ReadService(client);
+  const confirmation = deps?.confirmation ?? new LoopbackConfirmation();
   const auth = new AuthService(
     store,
     deps?.capture ?? new BrowserCapture(),
     client,
   );
-  const rules = new RuleService(
+  const rules = new RuleService(read, client, new PreviewStore(), confirmation);
+  const transactions = new TransactionService(
     read,
     client,
-    new PreviewStore(),
-    deps?.confirmation ?? new LoopbackConfirmation(),
+    new TransactionPreviewStore(),
+    confirmation,
   );
   const server = new McpServer({
     name: "monarch-for-claude",
@@ -124,6 +133,38 @@ export function createServer(deps?: {
         return response(
           await read.transaction(args.transaction_id, args.include_notes),
         );
+      } catch (e) {
+        return failure(e);
+      }
+    },
+  );
+  server.registerTool(
+    "preview_transaction_update",
+    {
+      description:
+        "Preview a non-delete update to one transaction: merchant/payee name, category, notes, reviewed state, report visibility, or tags. Tag replacement must be previewed separately from other fields.",
+      inputSchema: previewTransactionUpdateInput,
+      annotations: { readOnlyHint: true },
+    },
+    async (args) => {
+      try {
+        return response(await transactions.preview(args));
+      } catch (e) {
+        return failure(e);
+      }
+    },
+  );
+  server.registerTool(
+    "apply_transaction_update",
+    {
+      description:
+        "Apply one single-use, locally confirmed individual-transaction preview. This tool cannot delete transactions.",
+      inputSchema: applyTransactionUpdateInput,
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    async (args) => {
+      try {
+        return response(await transactions.apply(args.preview_id));
       } catch (e) {
         return failure(e);
       }

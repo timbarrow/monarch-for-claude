@@ -4,6 +4,8 @@ This is a local, single-user Windows connector for Claude Desktop. It exposes th
 
 Rule management supports create, update, delete, and reorder; merchant/original-statement, account, category, and amount criteria; category, tag, merchant-name, report-visibility, and review-status actions; and an explicit `apply_to_existing_transactions` option for create/update previews. Historical application is never implicit: the preview scans the full available transaction history, reports the matching count and examples, and the apply step still requires local confirmation.
 
+Individual transaction management supports previewed updates to merchant/payee name, category, notes, reviewed state, report visibility, and the complete tag set. Every update is single-use, checks that the transaction has not changed since preview, requires local confirmation, performs one fixed non-retried mutation, and verifies the result. Transaction deletion is not implemented or allowlisted.
+
 For historical application, the canonical preview shape is `{"kind":"create","rule":{...},"apply_to_existing_transactions":true}`. The flag belongs at the top level alongside `kind` and `rule`. For compatibility, `apply_to_historical` and `applyToExistingTransactions` are also accepted either there or inside `rule`; the server normalizes them before validation. Invalid rule requests return `INVALID_INPUT` with safe field paths and validation messages instead of an opaque error.
 
 ## Install

@@ -6,6 +6,8 @@ export const GRAPHQL_OPERATIONS = {
   GetCategories: `query GetCategories { categories { id name group { id name } } }`,
   GetHouseholdTransactionTags: `query GetHouseholdTransactionTags { householdTransactionTags { id name color } }`,
   GetTransactionRules: `query GetTransactionRules { transactionRules { id order merchantCriteriaUseOriginalStatement merchantCriteria { operator value } originalStatementCriteria { operator value } merchantNameCriteria { operator value } amountCriteria { operator isExpense value valueRange { lower upper } } categoryIds accountIds setCategoryAction { id name } addTagsAction { id name color } setMerchantAction { id name } linkGoalAction { id } linkSavingsGoalAction { id } setHideFromReportsAction reviewStatusAction sendNotificationAction splitTransactionsAction { amountType } recentApplicationCount lastAppliedAt } }`,
+  Web_TransactionDrawerUpdateTransaction: `mutation Web_TransactionDrawerUpdateTransaction($input: UpdateTransactionMutationInput!) { updateTransaction(input: $input) { transaction { id } errors { fieldErrors { field messages } message code } } }`,
+  Web_SetTransactionTags: `mutation Web_SetTransactionTags($input: SetTransactionTagsInput!) { setTransactionTags(input: $input) { transaction { id tags { id name color } } errors { fieldErrors { field messages } message code } } }`,
   Common_CreateTransactionRuleMutationV2: `mutation Common_CreateTransactionRuleMutationV2($input: CreateTransactionRuleInput!) { createTransactionRuleV2(input: $input) { transactionRule { id order } errors { fieldErrors { field messages } message code } } }`,
   Common_UpdateTransactionRuleMutationV2: `mutation Common_UpdateTransactionRuleMutationV2($input: UpdateTransactionRuleInput!) { updateTransactionRuleV2(input: $input) { transactionRule { id order } errors { fieldErrors { field messages } message code } } }`,
   Common_DeleteTransactionRule: `mutation Common_DeleteTransactionRule($id: ID!) { deleteTransactionRule(id: $id) { deleted errors { fieldErrors { field messages } message code } } }`,
@@ -22,6 +24,8 @@ export const READ_OPERATIONS = new Set<OperationName>([
   "GetTransactionRules",
 ]);
 export const ALLOWED_MUTATIONS = new Set<OperationName>([
+  "Web_TransactionDrawerUpdateTransaction",
+  "Web_SetTransactionTags",
   "Common_CreateTransactionRuleMutationV2",
   "Common_UpdateTransactionRuleMutationV2",
   "Common_DeleteTransactionRule",

@@ -37,7 +37,7 @@ export class LoopbackConfirmation implements Confirmation {
             "cache-control": "no-store",
           });
           response.end(
-            `<!doctype html><title>Confirm Monarch rule change</title><h1>Confirm Monarch rule change</h1><pre>${escapeHtml(JSON.stringify(change, null, 2))}</pre><form method="post"><button type="submit">Confirm</button></form><p>Closing this page cancels the change.</p>`,
+            `<!doctype html><title>Confirm Monarch change</title><h1>Confirm Monarch change</h1><pre>${escapeHtml(JSON.stringify(change, null, 2))}</pre><form method="post"><button type="submit">Confirm</button></form><p>Closing this page cancels the change.</p>`,
           );
           return;
         }

@@ -20,13 +20,18 @@ describe("public contract", () => {
         "list_classification_rules",
         "preview_classification_rule_change",
         "apply_classification_rule_change",
+        "preview_transaction_update",
+        "apply_transaction_update",
       ]
     `);
   });
-  it("contains only the four approved mutations", () => {
+  it("contains only the approved non-delete mutations", () => {
     const mutations = Object.entries(GRAPHQL_OPERATIONS)
       .filter(([, document]) => document.startsWith("mutation"))
       .map(([name]) => name);
     expect(mutations.sort()).toEqual([...ALLOWED_MUTATIONS].sort());
+    expect(Object.values(GRAPHQL_OPERATIONS).join("\n")).not.toContain(
+      "deleteTransaction(",
+    );
   });
 });

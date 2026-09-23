@@ -123,6 +123,47 @@ export const previewRuleInput = z
 export const applyRuleInput = z
   .object({ preview_id: z.string().uuid() })
   .strict();
+export const previewTransactionUpdateInput = z
+  .object({
+    transaction_id: idSchema,
+    merchant_name: z.string().trim().min(1).max(200).optional(),
+    category_id: idSchema.optional(),
+    notes: z.string().max(10_000).optional(),
+    reviewed: z.boolean().optional(),
+    hidden: z.boolean().optional(),
+    tag_ids: z
+      .array(idSchema)
+      .max(MAX_ID_ARRAY_LENGTH)
+      .refine(
+        (value) => new Set(value).size === value.length,
+        "duplicate tag id",
+      )
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const ordinaryUpdate =
+      value.merchant_name !== undefined ||
+      value.category_id !== undefined ||
+      value.notes !== undefined ||
+      value.reviewed !== undefined ||
+      value.hidden !== undefined;
+    if (!ordinaryUpdate && value.tag_ids === undefined)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "at least one transaction field is required",
+      });
+    if (ordinaryUpdate && value.tag_ids !== undefined)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tag_ids"],
+        message:
+          "tag replacement must be previewed separately from other transaction fields",
+      });
+  });
+export const applyTransactionUpdateInput = z
+  .object({ preview_id: z.string().uuid() })
+  .strict();
 
 export const APPROVED_TOOL_NAMES = [
   "get_monarch_connection_status",
@@ -136,4 +177,6 @@ export const APPROVED_TOOL_NAMES = [
   "list_classification_rules",
   "preview_classification_rule_change",
   "apply_classification_rule_change",
+  "preview_transaction_update",
+  "apply_transaction_update",
 ] as const;

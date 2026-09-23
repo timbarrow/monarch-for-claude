@@ -1,8 +1,8 @@
 {
   "name": "monarch-for-claude",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
-  "description": "A local Windows MCP server for Monarch read access and previewed classification-rule management.",
+  "description": "A local Windows MCP server for Monarch reads and previewed rule and non-delete transaction updates.",
   "type": "module",
   "license": "MIT",
   "bin": {
